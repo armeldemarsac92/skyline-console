@@ -40,7 +40,7 @@ jobs:
         run: |
           corepack enable
           corepack prepare yarn@1.22.22 --activate
-          yarn install --frozen-lockfile
+          yarn install --non-interactive
           rm -rf skyline_console/static dist
           yarn run build
           echo "${GITHUB_SHA}" > skyline_console/static/commit_id.txt
