@@ -26,10 +26,6 @@ export class ClustersStore extends Base {
     return client.magnum.clusterTemplates;
   }
 
-  get flavorClient() {
-    return client.nova.flavors;
-  }
-
   get networkClient() {
     return client.neutron.networks;
   }
@@ -89,24 +85,17 @@ export class ClustersStore extends Base {
       (await this.templateClient.show(item.cluster_template_id)) || {};
     item.template = template;
     const {
-      flavor_id: templateFlavorId,
-      master_flavor_id: templateMasterFlavorId,
       fixed_network: templateFixedNetworkId,
       fixed_subnet: templateSubnetId,
     } = template;
-    const flavorId = item.flavor_id || templateFlavorId;
-    const masterFlavorId = item.master_flavor_id || templateMasterFlavorId;
     const fixedNetworkId = item.fixed_network || templateFixedNetworkId;
     const fixedSubnetId = item.fixed_subnet || templateSubnetId;
-    const [kp = {}, fr = {}, mfr = {}, fx = {}, sub = {}, stack] =
-      await allSettled([
-        client.nova.keypairs.list(),
-        flavorId ? this.flavorClient.show(flavorId) : {},
-        masterFlavorId ? this.flavorClient.show(masterFlavorId) : {},
-        fixedNetworkId ? this.networkClient.show(fixedNetworkId) : {},
-        fixedSubnetId ? this.subnetClient.show(fixedSubnetId) : {},
-        item.stack_id ? this.stackClient.list({ id: item.stack_id }) : {},
-      ]);
+    const [kp = {}, fx = {}, sub = {}, stack] = await allSettled([
+      client.nova.keypairs.list(),
+      fixedNetworkId ? this.networkClient.show(fixedNetworkId) : {},
+      fixedSubnetId ? this.subnetClient.show(fixedSubnetId) : {},
+      item.stack_id ? this.stackClient.list({ id: item.stack_id }) : {},
+    ]);
     if (kp.status === 'fulfilled') {
       const { keypairs = [] } = kp.value;
       const keypair = keypairs.find((k) => k?.keypair?.name === item.keypair);
@@ -114,20 +103,6 @@ export class ClustersStore extends Base {
         item.original_keypair = item.keypair;
         item.keypair = null;
       }
-    }
-    if (fr.status === 'fulfilled') {
-      const { flavor } = fr.value;
-      item.flavor = flavor;
-    } else {
-      item.original_flavor_id = item.flavor_id;
-      item.flavor_id = null;
-    }
-    if (mfr.status === 'fulfilled') {
-      const { flavor: masterFlavor } = mfr.value;
-      item.masterFlavor = masterFlavor;
-    } else {
-      item.original_master_flavor_id = item.master_flavor_id;
-      item.master_flavor_id = null;
     }
     if (fx.status === 'fulfilled') {
       const { network: fixedNetwork } = fx.value;

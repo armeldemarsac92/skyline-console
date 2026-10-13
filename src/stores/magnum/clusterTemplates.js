@@ -23,10 +23,6 @@ export class ClusterTemplatesStore extends Base {
     return client.magnum.clusterTemplates;
   }
 
-  get flavorClient() {
-    return client.nova.flavors;
-  }
-
   get networkClient() {
     return client.neutron.networks;
   }
@@ -101,20 +97,15 @@ export class ClusterTemplatesStore extends Base {
   }
 
   async detailDidFetch(item) {
-    const [kp = {}, fr = {}, mfr = {}, ext = {}, fx = {}, sub = {}, img] =
-      await allSettled([
-        client.nova.keypairs.list(),
-        item.flavor_id ? this.flavorClient.show(item.flavor_id) : {},
-        item.master_flavor_id
-          ? this.flavorClient.show(item.master_flavor_id)
-          : {},
-        item.external_network_id
-          ? this.networkClient.show(item.external_network_id)
-          : {},
-        item.fixed_network ? this.networkClient.show(item.fixed_network) : {},
-        item.fixed_subnet ? this.subnetClient.show(item.fixed_subnet) : {},
-        item.image_id ? this.imageClient.show(item.image_id) : {},
-      ]);
+    const [kp = {}, ext = {}, fx = {}, sub = {}, img] = await allSettled([
+      client.nova.keypairs.list(),
+      item.external_network_id
+        ? this.networkClient.show(item.external_network_id)
+        : {},
+      item.fixed_network ? this.networkClient.show(item.fixed_network) : {},
+      item.fixed_subnet ? this.subnetClient.show(item.fixed_subnet) : {},
+      item.image_id ? this.imageClient.show(item.image_id) : {},
+    ]);
     if (kp.status === 'fulfilled') {
       const { keypairs = [] } = kp.value;
       const keypair = keypairs.find(
@@ -124,20 +115,6 @@ export class ClusterTemplatesStore extends Base {
         item.original_keypair_id = item.keypair_id;
         item.keypair_id = null;
       }
-    }
-    if (fr.status === 'fulfilled') {
-      const { flavor } = fr.value;
-      item.flavor = flavor;
-    } else {
-      item.original_flavor_id = item.flavor_id;
-      item.flavor_id = null;
-    }
-    if (mfr.status === 'fulfilled') {
-      const { flavor: masterFlavor } = mfr.value;
-      item.masterFlavor = masterFlavor;
-    } else {
-      item.original_master_flavor_id = item.master_flavor_id;
-      item.master_flavor_id = null;
     }
     if (ext.status === 'fulfilled') {
       const { network } = ext.value;
