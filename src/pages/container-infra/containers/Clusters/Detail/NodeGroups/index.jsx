@@ -684,6 +684,7 @@ export class NodeGroups extends Component {
             )}
           <Input.Search
             allowClear
+            className={styles['role-filter']}
             placeholder={t('Filter by Role')}
             onSearch={(role) => this.setState({ role: role.trim() }, this.load)}
           />
@@ -707,7 +708,7 @@ export class NodeGroups extends Component {
           dataSource={groups}
           rowKey="uuid"
           loading={loading}
-          scroll={{ x: 'max-content' }}
+          scroll={{ x: 960 }}
           onChange={(_, __, sorter, { action }) => {
             if (action === 'sort')
               this.setState(

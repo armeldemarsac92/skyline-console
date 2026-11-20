@@ -2,17 +2,18 @@
 
 .panel {
   padding: 0 @body-padding @body-padding;
+  overflow-wrap: anywhere;
 }
 
 .toolbar {
-  max-width: 100%;
+  display: flex;
+  overflow-x: auto;
+}
 
-  > :global(.ant-space-item) {
-    min-width: 0;
-  }
+.role-filter {
+  min-width: 10rem;
 }
 
 .cell-message {
   max-width: 36ch;
-  overflow-wrap: anywhere;
 }
