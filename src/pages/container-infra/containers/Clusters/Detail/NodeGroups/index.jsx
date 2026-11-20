@@ -3,6 +3,7 @@ import React, { Component } from 'react';
 import {
   Alert,
   Button,
+  Card,
   Descriptions,
   Input,
   Modal,
@@ -37,6 +38,7 @@ import {
 } from 'resources/magnum/nodegroups';
 import Resize from '../../actions/Resize';
 import GroupForm from './GroupForm';
+import styles from './index.less';
 
 const bounds = ['min_node_count', 'max_node_count'];
 const statusText = (status) => clusterStatus[status] || status || '-';
@@ -636,7 +638,7 @@ export class NodeGroups extends Component {
     );
   }
 
-  render() {
+  renderContent() {
     const { detail } = this.props;
     const { groups, supported, readable, loading, error } = this.state;
     if (supported === false)
@@ -697,6 +699,7 @@ export class NodeGroups extends Component {
           dataSource={groups}
           rowKey="uuid"
           loading={loading}
+          scroll={{ x: 'max-content' }}
           onChange={(_, __, sorter, { action }) => {
             if (action === 'sort')
               this.setState(
@@ -707,6 +710,14 @@ export class NodeGroups extends Component {
         />
         {this.renderModal()}
       </Space>
+    );
+  }
+
+  render() {
+    return (
+      <div className={styles.panel}>
+        <Card>{this.renderContent()}</Card>
+      </div>
     );
   }
 }
