@@ -44,6 +44,10 @@ export class Projects extends Base {
     return this.path.includes('project-admin');
   }
 
+  get hasTab() {
+    return this.inProject && this.props.tab === 'projects';
+  }
+
   get inUserDetail() {
     return this.inDetailPage && this.path.includes('user-admin/detail');
   }

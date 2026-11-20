@@ -87,7 +87,11 @@ export class Overview extends Component {
   }
 
   renderQuota() {
-    return <QuotaOverview />;
+    const { selectedRegion, user } = globalRootStore;
+    const projectId = user?.project?.id;
+    return projectId ? (
+      <QuotaOverview key={`${selectedRegion}/${projectId}`} />
+    ) : null;
   }
 
   renderProject() {

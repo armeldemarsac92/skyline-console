@@ -17,6 +17,7 @@ import E404 from 'pages/base/containers/404';
 import Domain from '../containers/Domain';
 import DomainDetail from '../containers/Domain/Detail';
 import Project from '../containers/Project';
+import ProjectAdmin from '../containers/Project/Admin';
 import ProjectCreate from '../containers/Project/actions/Create';
 import ProjectEdit from '../containers/Project/actions/Edit';
 import ProjectDetail from '../containers/Project/Detail';
@@ -44,7 +45,7 @@ export default [
         exact: true,
       },
       { path: `${PATH}/project`, component: Project, exact: true },
-      { path: `${PATH}/project-admin`, component: Project, exact: true },
+      { path: `${PATH}/project-admin`, component: ProjectAdmin, exact: true },
       { path: `${PATH}/project/create`, component: ProjectCreate, exact: true },
       {
         path: `${PATH}/project-admin/create`,

@@ -13,11 +13,13 @@
 // limitations under the License.
 
 import { inject, observer } from 'mobx-react';
+import { has } from 'lodash';
 import globalProjectStore, { ProjectStore } from 'stores/keystone/project';
 import React from 'react';
 import { Spin } from 'antd';
 import { ModalAction } from 'containers/Action';
 import { VolumeTypeStore } from 'stores/cinder/volume-type';
+import { hasMagnumPolicy } from 'resources/magnum/capabilities';
 import {
   quotaCardList,
   getVolumeTypeCards,
@@ -56,7 +58,15 @@ export class ManageQuota extends ModalAction {
   }
 
   get enableMagnum() {
-    return this.props.rootStore.checkEndpoint('magnum');
+    const { id: project_id } = this.item;
+    const { magnum_cluster_id, magnum_quota_project_id } =
+      this.projectStore.quota;
+    const rule = magnum_cluster_id ? 'quota:update' : 'quota:create';
+    return (
+      this.props.rootStore.checkEndpoint('magnum') &&
+      magnum_quota_project_id === project_id &&
+      hasMagnumPolicy(rule, { project_id })
+    );
   }
 
   get enableTrove() {
@@ -156,9 +166,6 @@ export class ManageQuota extends ModalAction {
     if (this.enableZun) {
       newQuotaCardList.push(zunQuotaCard);
     }
-    if (this.enableMagnum) {
-      newQuotaCardList.push(magnumQuotaCard);
-    }
     if (this.enableTrove) {
       newQuotaCardList.push(troveQuotaCard);
     }
@@ -207,15 +214,22 @@ export class ManageQuota extends ModalAction {
   }
 
   getMagnumFormItems() {
-    const formItems = this.getFormItemsByCards('magnum');
-    return formItems.map((it) => {
-      if (it.name === 'magnum_cluster') {
-        it.min = 1;
-        it.tip = t('The limit of cluster instance greater than or equal to 1.');
-      }
-      return it;
-    });
+    return [
+      this.getTitleLabel('magnum', magnumQuotaCard.text),
+      {
+        ...this.getInputItem('magnum_cluster', t('Clusters')),
+        min: 0,
+        precision: 0,
+        validator: undefined,
+      },
+    ];
   }
+
+  onValuesChange = (changed) => {
+    if (has(changed, 'magnum_cluster')) {
+      this.magnumQuotaEdited = true;
+    }
+  };
 
   get formItems() {
     if (this.projectStore.quotaLoading) {
@@ -269,8 +283,12 @@ export class ManageQuota extends ModalAction {
       share,
       zun,
       magnum,
+      magnum_cluster,
       ...others
     } = values;
+    if (this.magnumQuotaEdited && this.enableMagnum) {
+      others.magnum_cluster = magnum_cluster;
+    }
     return {
       project_id,
       data: others,

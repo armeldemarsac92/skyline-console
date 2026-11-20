@@ -128,6 +128,7 @@ export class MagnumClient extends Base {
             key: 'Cluster',
             method: 'patch',
           },
+          { name: 'deleteQuota', key: 'Cluster', method: 'delete' },
         ],
       },
     ];

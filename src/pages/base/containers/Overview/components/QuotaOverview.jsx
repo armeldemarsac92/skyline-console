@@ -17,7 +17,7 @@ import { Badge, Card, Col, List, Progress, Row, Spin, Tooltip } from 'antd';
 import { QuestionCircleOutlined } from '@ant-design/icons';
 import { inject, observer } from 'mobx-react';
 import globalVolumeTypeStore from 'stores/cinder/volume-type';
-import globalProjectStore from 'stores/keystone/project';
+import { ProjectStore } from 'stores/keystone/project';
 import globalRootStore from 'stores/root';
 import { firewallEndpoint } from 'client/client/constants';
 import { isNumber } from 'lodash';
@@ -197,7 +197,7 @@ export class QuotaOverview extends Component {
       isLoading: true,
     };
     const { projectStore, volumeTypeStore } = props;
-    this.projectStore = projectStore || globalProjectStore;
+    this.projectStore = projectStore || new ProjectStore();
     this.volumeTypeStore = volumeTypeStore || globalVolumeTypeStore;
   }
 
@@ -287,15 +287,19 @@ export class QuotaOverview extends Component {
   getFilteredValue = (value) => value.filter((it) => !it.hidden);
 
   getItemInfo = (data, i) => {
+    const { used: usage, limit } = data[i.key] || {};
+    const isMagnum = i.key === 'magnum_cluster';
     let percent = 0;
-    if (data[i.key] && isNumber(data[i.key].used) && data[i.key].limit !== -1) {
-      percent = (data[i.key].used / data[i.key].limit) * 100;
-    }
     let used = '-';
-    if (data[i.key] && isNumber(data[i.key].used)) {
-      used = `${data[i.key].used} / ${
-        data[i.key].limit === -1 ? t('Unlimit') : data[i.key].limit
-      }`;
+    if (isNumber(usage) && limit !== -1 && (!isMagnum || limit > 0)) {
+      percent = (usage / limit) * 100;
+    } else if (isMagnum && limit === 0 && usage > 0) {
+      percent = 100;
+    }
+    if (isMagnum && (isNumber(usage) || isNumber(limit))) {
+      used = `${usage ?? '-'} / ${limit === -1 ? t('Unlimit') : limit ?? '-'}`;
+    } else if (isNumber(usage)) {
+      used = `${usage} / ${limit === -1 ? t('Unlimit') : limit}`;
     }
 
     const strokeColor =
@@ -349,6 +353,7 @@ export class QuotaOverview extends Component {
               bordered={false}
               loading={isLoading}
               size="small"
+              extra={item.type === 'magnum' && this.props.magnumQuotaAction}
             >
               <Row gutter={24}>{this.renderQuotaCardContent(item)}</Row>
             </Card>
@@ -379,9 +384,36 @@ export class QuotaOverview extends Component {
     if (isLoading) {
       return <Spin />;
     }
-    return this.renderQuotaCard(
-      this.projectStore.quota,
+    const { quota } = this.projectStore;
+    const cards = this.renderQuotaCard(
+      quota,
       this.getFilteredValue(item.value)
+    );
+    if (item.type !== 'magnum') {
+      return cards;
+    }
+    const { magnum_nodes, magnum_quota_error, magnum_stats_error } = quota;
+    return (
+      <>
+        {cards}
+        <Col span={12}>
+          {t('Nodes (including control plane)')}: {magnum_nodes ?? '-'}
+        </Col>
+        {magnum_quota_error &&
+          this.renderMagnumError(magnum_quota_error, t('Magnum quota'))}
+        {magnum_stats_error &&
+          this.renderMagnumError(magnum_stats_error, t('Magnum statistics'))}
+      </>
+    );
+  }
+
+  renderMagnumError(status, name) {
+    return (
+      <Col span={24}>
+        {status === 403
+          ? t("You don't have access to get {name}.", { name })
+          : t('Unable to get {name}.', { name })}
+      </Col>
     );
   }
 

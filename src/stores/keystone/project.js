@@ -19,6 +19,8 @@ import client from 'client';
 import Base from 'stores/base';
 import globalRootStore from 'stores/root';
 import globalKeypairStore from 'stores/nova/keypair';
+import globalMagnumQuotaStore from 'stores/magnum/quota';
+import { hasMagnumPolicy } from 'resources/magnum/capabilities';
 
 export class ProjectStore extends Base {
   @observable
@@ -89,10 +91,6 @@ export class ProjectStore extends Base {
 
   get zunQuotaClient() {
     return client.zun.quotas;
-  }
-
-  get magnumQuotaClient() {
-    return client.magnum.quotas.cluster;
   }
 
   get troveQuotaClient() {
@@ -292,6 +290,8 @@ export class ProjectStore extends Base {
 
   @action
   async fetchProjectQuota({ project_id, withKeyPair = false }) {
+    const quotaRequest = {};
+    this.quotaRequest = quotaRequest;
     this.quotaLoading = true;
     const promiseArr = [
       this.novaQuotaClient.detail(project_id),
@@ -312,10 +312,7 @@ export class ProjectStore extends Base {
           })
         : null
     );
-    promiseArr.push(
-      this.enableMagnum ? this.magnumQuotaClient.list(project_id) : null,
-      this.enableMagnum ? client.magnum.clusters.listDetail() : null
-    );
+    promiseArr.push(this.fetchMagnumQuotaData(project_id));
     promiseArr.push(
       this.enableTrove ? this.troveQuotaClient.show(project_id) : null
     );
@@ -326,19 +323,19 @@ export class ProjectStore extends Base {
       cinderResult,
       shareResult,
       zunResult,
-      magnumResult,
-      magnumInstanceResult,
+      magnumQuota,
       troveResult,
       keyPairResult,
-    ] = await Promise.all(promiseArr);
-    this.isSubmitting = false;
+    ] = await Promise.all(promiseArr).finally(() => {
+      if (this.quotaRequest === quotaRequest) {
+        this.quotaLoading = false;
+      }
+    });
     const { quota_set: novaQuota } = novaResult;
     const { quota_set: cinderQuota = {} } = cinderResult || {};
     const { quota: neutronQuota } = neutronResult;
     const { quota_set: shareQuota = {} } = shareResult || {};
     const zunQuota = zunResult || {};
-    const { hard_limit, id: clusterQuotaId } = magnumResult || {};
-    const { clusters = [] } = magnumInstanceResult || {};
     const { quotas: troveQuota = [] } = troveResult || {};
     this.updateNovaQuota(novaQuota);
     const renameShareQuota = Object.keys(shareQuota).reduce((pre, cur) => {
@@ -351,13 +348,6 @@ export class ProjectStore extends Base {
       pre[key] = zunQuota[cur];
       return pre;
     }, {});
-    const magnumQuota = {
-      magnum_cluster: {
-        limit: hard_limit,
-        in_use: clusters.length,
-      },
-      magnum_cluster_id: clusterQuotaId,
-    };
     const renameTroveQuota = troveQuota.reduce((pre, cur) => {
       const key = `trove_${cur.resource}`;
       pre[key] = cur;
@@ -369,7 +359,6 @@ export class ProjectStore extends Base {
       ...neutronQuota,
       ...renameShareQuota,
       ...renameZunQuota,
-      ...magnumQuota,
       ...renameTroveQuota,
     };
     if (withKeyPair) {
@@ -377,9 +366,10 @@ export class ProjectStore extends Base {
       const keyPairItem = quota.key_pairs || {};
       keyPairItem.in_use = keyPairCount;
     }
-    const newQuota = this.updateQuotaData(quota);
-    this.quota = newQuota;
-    this.quotaLoading = false;
+    const newQuota = { ...this.updateQuotaData(quota), ...magnumQuota };
+    if (this.quotaRequest === quotaRequest) {
+      this.quota = newQuota;
+    }
     return newQuota;
   }
 
@@ -503,16 +493,14 @@ export class ProjectStore extends Base {
   }
 
   getMagnumQuotaBody(data, project_id) {
-    if (!this.enableMagnum) {
+    if (!this.enableMagnum || isNil(data.magnum_cluster)) {
       return {};
     }
-    const { magnum_cluster } = data;
-    const magnumReqBody = this.omitNil({
+    return {
       project_id,
       resource: 'Cluster',
-      hard_limit: magnum_cluster,
-    });
-    return magnumReqBody;
+      hard_limit: data.magnum_cluster,
+    };
   }
 
   getTroveQuotaBody(data) {
@@ -554,12 +542,19 @@ export class ProjectStore extends Base {
       reqs.push(client.zun.quotas.update(project_id, zunReqBody));
     }
     if (!isEmpty(magnumReqBody)) {
-      // if magnum_cluster_id is existed, it means the quota has been initialized
-      const { magnum_cluster_id } = current_quota || {};
-      if (magnum_cluster_id) {
-        reqs.push(client.magnum.quotas.updateQuota(project_id, magnumReqBody));
-      } else {
-        reqs.push(client.magnum.quotas.create(magnumReqBody));
+      const { magnum_cluster_id, magnum_quota_project_id } =
+        current_quota || {};
+      const target = { project_id };
+      const rule = magnum_cluster_id ? 'quota:update' : 'quota:create';
+      if (
+        magnum_quota_project_id === project_id &&
+        hasMagnumPolicy(rule, target)
+      ) {
+        reqs.push(
+          magnum_cluster_id
+            ? client.magnum.quotas.updateQuota(project_id, magnumReqBody)
+            : client.magnum.quotas.create(magnumReqBody)
+        );
       }
     }
     if (!isEmpty(troveReqBody)) {
@@ -572,9 +567,11 @@ export class ProjectStore extends Base {
   @action
   async updateProjectQuota({ project_id, data, current_quota }) {
     this.isSubmitting = true;
-    const result = await this.updateQuota(project_id, data, current_quota);
-    this.isSubmitting = false;
-    return result;
+    try {
+      return await this.updateQuota(project_id, data, current_quota);
+    } finally {
+      this.isSubmitting = false;
+    }
   }
 
   @action
@@ -704,20 +701,89 @@ export class ProjectStore extends Base {
     return zunQuota;
   }
 
-  @action
-  async fetchProjectMagnumQuota(projectId) {
-    const [quotas, clustersRes] = await Promise.all([
-      this.magnumQuotaClient.list(projectId || this.currentProjectId),
-      client.magnum.clusters.listDetail(),
+  async fetchMagnumQuotaData(projectId) {
+    if (!projectId || !this.enableMagnum) {
+      return {};
+    }
+    const target = { project_id: projectId };
+    const [quota, stats] = await Promise.allSettled([
+      hasMagnumPolicy('quota:get', target)
+        ? globalMagnumQuotaStore.read(projectId)
+        : undefined,
+      hasMagnumPolicy('stats:get_all', target)
+        ? client.magnum.stats.list(target)
+        : undefined,
     ]);
-    const { hard_limit } = this.updateQuotaData(quotas);
-    const { clusters = [] } = clustersRes || {};
-    const magnumQuota = this.updateQuotaData({
+    const { hard_limit: limit, id } = quota.value || {};
+    const { clusters: used, nodes } = stats.value || {};
+    return this.omitNil({
       magnum_cluster: {
-        limit: hard_limit,
-        in_use: clusters.length,
+        ...this.omitNil({ limit, in_use: used, used }),
+        left: this.getRemainingMagnumQuota(limit, used),
       },
+      magnum_cluster_id: id,
+      magnum_quota_project_id: quota.value ? projectId : undefined,
+      magnum_nodes: nodes,
+      magnum_quota_error:
+        quota.reason && (quota.reason.response?.status || true),
+      magnum_stats_error:
+        stats.reason && (stats.reason.response?.status || true),
     });
+  }
+
+  getRemainingMagnumQuota(limit, used) {
+    if (limit === 0 || limit === -1) {
+      return limit;
+    }
+    return isNil(used) || isNil(limit) ? null : Math.max(0, limit - used);
+  }
+
+  @action
+  async resetProjectMagnumQuota(projectId) {
+    const target = { project_id: projectId };
+    if (
+      this.quota.magnum_quota_project_id !== projectId ||
+      !this.quota.magnum_cluster_id ||
+      !hasMagnumPolicy('quota:delete', target)
+    ) {
+      return;
+    }
+    const { user, selectedRegion } = globalRootStore;
+    const sameContext = () =>
+      globalRootStore.user === user &&
+      globalRootStore.selectedRegion === selectedRegion;
+    await globalMagnumQuotaStore.deleteOverride(projectId);
+    if (!sameContext()) {
+      return;
+    }
+    let result;
+    let readError;
+    try {
+      result = await globalMagnumQuotaStore.read(projectId);
+    } catch (error) {
+      readError = error.response?.status || true;
+    }
+    if (!sameContext() || this.quota.magnum_quota_project_id !== projectId) {
+      return;
+    }
+    const { hard_limit: limit, id } = result || {};
+    const { magnum_cluster } = this.quota;
+    this.quota = {
+      ...this.quota,
+      magnum_cluster_id: id,
+      magnum_quota_project_id: result ? projectId : undefined,
+      magnum_quota_error: readError,
+      magnum_cluster: {
+        ...magnum_cluster,
+        limit,
+        left: this.getRemainingMagnumQuota(limit, magnum_cluster.used),
+      },
+    };
+  }
+
+  @action
+  async fetchProjectMagnumQuota(projectId = this.currentProjectId) {
+    const magnumQuota = await this.fetchMagnumQuotaData(projectId);
     this.magnumQuota = magnumQuota;
     return magnumQuota;
   }

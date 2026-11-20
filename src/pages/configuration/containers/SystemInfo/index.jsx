@@ -14,11 +14,13 @@
 
 import { observer, inject } from 'mobx-react';
 import Base from 'containers/TabList';
+import { hasMagnumPolicy } from 'resources/magnum/capabilities';
 import Catalog from './Catalog';
 import ComputeService from './ComputeService';
 import CinderService from './CinderService';
 import NeutronAgent from './NeutronAgent';
 import HeatService from './HeatService';
+import MagnumService from './MagnumService';
 
 export class Service extends Base {
   get enableCinder() {
@@ -59,6 +61,16 @@ export class Service extends Base {
         title: t('Orchestration Services'),
         key: 'heatService',
         component: HeatService,
+      });
+    }
+    if (
+      this.props.rootStore.checkEndpoint('magnum') &&
+      hasMagnumPolicy('magnum-service:get_all')
+    ) {
+      tabs.push({
+        title: t('Magnum services'),
+        key: 'magnumService',
+        component: MagnumService,
       });
     }
     return tabs;
