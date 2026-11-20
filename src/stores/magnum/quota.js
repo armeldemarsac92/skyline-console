@@ -33,6 +33,17 @@ export class MagnumQuotaStore extends Base {
     return this.client.cluster.list(projectId);
   }
 
+  save(projectId, limit, hasOverride) {
+    const body = {
+      project_id: projectId,
+      resource: 'Cluster',
+      hard_limit: limit,
+    };
+    return hasOverride
+      ? this.client.updateQuota(projectId, body)
+      : this.client.create(body);
+  }
+
   deleteOverride(projectId) {
     return this.client.deleteQuota(projectId);
   }

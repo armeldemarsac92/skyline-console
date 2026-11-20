@@ -36,7 +36,7 @@ export class MagnumQuotas extends Base {
       title: t('Project ID'),
       dataIndex: 'project_id',
       render: (id) =>
-        this.getLinkRender('projectDetail', id, { id }, { tab: 'quota' }),
+        this.getLinkRender('projectDetail', id, { id }, { tab: 'magnumQuota' }),
     },
     {
       title: t('Resource'),

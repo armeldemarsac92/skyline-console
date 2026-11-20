@@ -16,9 +16,11 @@ import { inject, observer } from 'mobx-react';
 import { ProjectStore } from 'stores/keystone/project';
 import Base from 'containers/TabDetail';
 import { enabledColumn } from 'resources/keystone/domain';
+import { hasMagnumPolicy } from 'resources/magnum/capabilities';
 import UserGroup from '../../UserGroup';
 import User from '../../User';
 import Quota from './Quota';
+import MagnumQuota from './MagnumQuota';
 import actionConfigs from '../actions';
 
 export class Detail extends Base {
@@ -95,6 +97,17 @@ export class Detail extends Base {
         component: Quota,
       },
     ];
+    if (
+      this.isAdminPage &&
+      this.props.rootStore.checkEndpoint('magnum') &&
+      hasMagnumPolicy('quota:get', { project_id: this.id })
+    ) {
+      tabs.push({
+        title: t('Magnum quotas'),
+        key: 'magnumQuota',
+        component: MagnumQuota,
+      });
+    }
     return tabs;
   }
 }

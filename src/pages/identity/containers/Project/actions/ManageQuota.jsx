@@ -13,20 +13,17 @@
 // limitations under the License.
 
 import { inject, observer } from 'mobx-react';
-import { has } from 'lodash';
 import globalProjectStore, { ProjectStore } from 'stores/keystone/project';
 import React from 'react';
 import { Spin } from 'antd';
 import { ModalAction } from 'containers/Action';
 import { VolumeTypeStore } from 'stores/cinder/volume-type';
-import { hasMagnumPolicy } from 'resources/magnum/capabilities';
 import {
   quotaCardList,
   getVolumeTypeCards,
   shareQuotaCard,
   zunQuotaCard,
   troveQuotaCard,
-  magnumQuotaCard,
 } from 'pages/base/containers/Overview/components/QuotaOverview';
 
 export class ManageQuota extends ModalAction {
@@ -57,18 +54,6 @@ export class ManageQuota extends ModalAction {
     return this.props.rootStore.checkEndpoint('zun');
   }
 
-  get enableMagnum() {
-    const { id: project_id } = this.item;
-    const { magnum_cluster_id, magnum_quota_project_id } =
-      this.projectStore.quota;
-    const rule = magnum_cluster_id ? 'quota:update' : 'quota:create';
-    return (
-      this.props.rootStore.checkEndpoint('magnum') &&
-      magnum_quota_project_id === project_id &&
-      hasMagnumPolicy(rule, { project_id })
-    );
-  }
-
   get enableTrove() {
     return (
       this.props.rootStore.checkEndpoint('trove') &&
@@ -81,6 +66,7 @@ export class ManageQuota extends ModalAction {
     const promiseArr = [
       this.projectStore.fetchProjectQuota({
         project_id,
+        withMagnum: false,
       }),
     ];
     if (this.enableCinder) {
@@ -213,24 +199,6 @@ export class ManageQuota extends ModalAction {
     return [labelItem, ...items];
   }
 
-  getMagnumFormItems() {
-    return [
-      this.getTitleLabel('magnum', magnumQuotaCard.text),
-      {
-        ...this.getInputItem('magnum_cluster', t('Clusters')),
-        min: 0,
-        precision: 0,
-        validator: undefined,
-      },
-    ];
-  }
-
-  onValuesChange = (changed) => {
-    if (has(changed, 'magnum_cluster')) {
-      this.magnumQuotaEdited = true;
-    }
-  };
-
   get formItems() {
     if (this.projectStore.quotaLoading) {
       return [
@@ -249,9 +217,6 @@ export class ManageQuota extends ModalAction {
     }
     if (this.enableZun) {
       form.push(...this.getFormItemsByCards('zun'));
-    }
-    if (this.enableMagnum) {
-      form.push(...this.getMagnumFormItems());
     }
     if (this.enableTrove) {
       form.push(...this.getFormItemsByCards('trove'));
@@ -274,26 +239,18 @@ export class ManageQuota extends ModalAction {
 
   getSubmitData(values) {
     const { id: project_id } = this.item;
-    const {
-      more,
-      compute,
-      storage,
-      networks,
-      volumeTypes,
-      share,
-      zun,
-      magnum,
-      magnum_cluster,
-      ...others
-    } = values;
-    if (this.magnumQuotaEdited && this.enableMagnum) {
-      others.magnum_cluster = magnum_cluster;
-    }
-    return {
-      project_id,
-      data: others,
-      current_quota: this.projectStore.quota,
-    };
+    const { quota } = this.projectStore;
+    const data = Object.fromEntries(
+      this.formItems
+        .filter(
+          ({ name, type }) =>
+            type === 'input-number' &&
+            values[name] != null &&
+            values[name] !== quota[name]?.limit
+        )
+        .map(({ name }) => [name, values[name]])
+    );
+    return { project_id, data };
   }
 
   onSubmit = async (body) => {

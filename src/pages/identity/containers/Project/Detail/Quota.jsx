@@ -13,14 +13,10 @@
 // limitations under the License.
 
 import React, { Component } from 'react';
-import { Button, Popconfirm } from 'antd';
-import Notify from 'components/Notify';
 import { inject, observer } from 'mobx-react';
 import QuotaOverview from 'pages/base/containers/Overview/components/QuotaOverview';
 import { VolumeTypeStore } from 'stores/cinder/volume-type';
 import { ProjectStore } from 'stores/keystone/project';
-import { hasMagnumPolicy } from 'resources/magnum/capabilities';
-import { isAdminPage } from 'utils';
 import styles from './index.less';
 
 export class Quota extends Component {
@@ -52,43 +48,6 @@ export class Quota extends Component {
     return Promise.all(promiseArr);
   };
 
-  resetMagnumQuota = async () => {
-    const { id } = this.props.match.params;
-    try {
-      await this.projectStore.resetProjectMagnumQuota(id);
-    } catch (error) {
-      Notify.errorWithDetail(
-        error.response || error,
-        t('Unable to restore the default Magnum quota.')
-      );
-    }
-  };
-
-  renderMagnumQuotaAction() {
-    const { id: project_id } = this.props.match.params;
-    const { quota, quotaLoading } = this.projectStore;
-    if (
-      !isAdminPage(this.props.location?.pathname) ||
-      quotaLoading ||
-      !quota.magnum_cluster_id ||
-      quota.magnum_quota_project_id !== project_id ||
-      !this.props.rootStore.checkEndpoint('magnum') ||
-      !hasMagnumPolicy('quota:delete', { project_id })
-    ) {
-      return null;
-    }
-    return (
-      <Popconfirm
-        title={t('Restore the default Magnum quota for this project?')}
-        onConfirm={this.resetMagnumQuota}
-        okText={t('OK')}
-        cancelText={t('Cancel')}
-      >
-        <Button>{t('Restore Default Quota')}</Button>
-      </Popconfirm>
-    );
-  }
-
   render() {
     const { id } = this.props.match.params;
     const { selectedRegion } = this.props.rootStore;
@@ -100,7 +59,6 @@ export class Quota extends Component {
           projectStore={this.projectStore}
           volumeTypeStore={this.volumeTypeStore}
           volumeTypeData={this.volumeTypeData}
-          magnumQuotaAction={this.renderMagnumQuotaAction()}
         />
       </div>
     );

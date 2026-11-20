@@ -353,7 +353,6 @@ export class QuotaOverview extends Component {
               bordered={false}
               loading={isLoading}
               size="small"
-              extra={item.type === 'magnum' && this.props.magnumQuotaAction}
             >
               <Row gutter={24}>{this.renderQuotaCardContent(item)}</Row>
             </Card>

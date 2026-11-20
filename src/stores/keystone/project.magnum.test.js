@@ -68,39 +68,6 @@ it('uses each selected project for the limit and both consumption counters', asy
   expect(store.quota.magnum_cluster_id).toBe(12);
 });
 
-it('creates a zero override and updates it only when the submitted quota targets its project', async () => {
-  let override;
-  magnum = mockMagnum(({ method, body }) => {
-    if (method === 'POST' || method === 'PATCH') {
-      override = { hard_limit: body.hard_limit, id: 11 };
-    }
-    return { status: 200, data: override || { hard_limit: 9 } };
-  });
-  const project_id = 'first';
-  const read = () => store.fetchProjectQuota({ project_id });
-  const submit = (data, current_quota, target = project_id) =>
-    store.updateProjectQuota({ project_id: target, data, current_quota });
-  const initial = await read();
-  await submit({}, initial);
-  await submit({ magnum_cluster: 0 }, initial);
-  const created = await read();
-  await submit({ magnum_cluster: 2 }, created, 'second');
-  await submit({ magnum_cluster: 2 }, created);
-
-  expect(
-    magnum.requests
-      .filter(({ method }) => method !== 'GET')
-      .map(({ method, path, body }) => [method, path, body])
-  ).toEqual([
-    ['POST', '/v1/quotas', { project_id, resource: 'Cluster', hard_limit: 0 }],
-    [
-      'PATCH',
-      '/v1/quotas/first/Cluster',
-      { project_id, resource: 'Cluster', hard_limit: 2 },
-    ],
-  ]);
-});
-
 it.each([403, 404])(
   'retains all quota limits if stats returns %s',
   async (status) => {
@@ -155,14 +122,14 @@ it('lists explicit quotas across pages and reads the server default after deleti
     expect.objectContaining({ all_tenants: true }),
     expect.objectContaining({ all_tenants: true, marker: '11' }),
   ]);
-  await store.fetchProjectQuota({ project_id: 'first' });
+  await store.fetchProjectMagnumQuota('first');
   await store.resetProjectMagnumQuota('first');
-  expect(store.quota.magnum_cluster).toMatchObject({
+  expect(store.magnumQuota.magnum_cluster).toMatchObject({
     limit: 9,
     used: 2,
     left: 7,
   });
-  expect(store.quota.magnum_cluster_id).toBeUndefined();
+  expect(store.magnumQuota.magnum_cluster_id).toBeUndefined();
   expect(magnum.requests.slice(-2)).toEqual([
     expect.objectContaining({
       method: 'DELETE',

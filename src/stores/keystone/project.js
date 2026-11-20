@@ -289,7 +289,11 @@ export class ProjectStore extends Base {
   }
 
   @action
-  async fetchProjectQuota({ project_id, withKeyPair = false }) {
+  async fetchProjectQuota({
+    project_id,
+    withKeyPair = false,
+    withMagnum = true,
+  }) {
     const quotaRequest = {};
     this.quotaRequest = quotaRequest;
     this.quotaLoading = true;
@@ -312,7 +316,7 @@ export class ProjectStore extends Base {
           })
         : null
     );
-    promiseArr.push(this.fetchMagnumQuotaData(project_id));
+    promiseArr.push(withMagnum ? this.fetchMagnumQuotaData(project_id) : null);
     promiseArr.push(
       this.enableTrove ? this.troveQuotaClient.show(project_id) : null
     );
@@ -492,38 +496,24 @@ export class ProjectStore extends Base {
     return zunReqBody;
   }
 
-  getMagnumQuotaBody(data, project_id) {
-    if (!this.enableMagnum || isNil(data.magnum_cluster)) {
-      return {};
-    }
-    return {
-      project_id,
-      resource: 'Cluster',
-      hard_limit: data.magnum_cluster,
-    };
-  }
-
   getTroveQuotaBody(data) {
     if (!this.enableTrove) {
       return {};
     }
     const { trove_instances, trove_volumes } = data;
-    const troveReqBody = this.omitNil({
-      quotas: {
-        instances: trove_instances,
-        volumes: trove_volumes,
-      },
+    const quotas = this.omitNil({
+      instances: trove_instances,
+      volumes: trove_volumes,
     });
-    return troveReqBody;
+    return isEmpty(quotas) ? {} : { quotas };
   }
 
-  async updateQuota(project_id, data, current_quota) {
+  async updateQuota(project_id, data) {
     const novaReqBody = this.getNovaQuotaBody(data);
     const cinderReqBody = this.getCinderQuotaBody(data);
     const neutronReqBody = this.getNeutronQuotaBody(data);
     const shareReqBody = this.getShareQuotaBody(data);
     const zunReqBody = this.getZunQuotaBody(data);
-    const magnumReqBody = this.getMagnumQuotaBody(data, project_id);
     const troveReqBody = this.getTroveQuotaBody(data);
     const reqs = [];
     if (!isEmpty(novaReqBody.quota_set)) {
@@ -541,22 +531,6 @@ export class ProjectStore extends Base {
     if (!isEmpty(zunReqBody)) {
       reqs.push(client.zun.quotas.update(project_id, zunReqBody));
     }
-    if (!isEmpty(magnumReqBody)) {
-      const { magnum_cluster_id, magnum_quota_project_id } =
-        current_quota || {};
-      const target = { project_id };
-      const rule = magnum_cluster_id ? 'quota:update' : 'quota:create';
-      if (
-        magnum_quota_project_id === project_id &&
-        hasMagnumPolicy(rule, target)
-      ) {
-        reqs.push(
-          magnum_cluster_id
-            ? client.magnum.quotas.updateQuota(project_id, magnumReqBody)
-            : client.magnum.quotas.create(magnumReqBody)
-        );
-      }
-    }
     if (!isEmpty(troveReqBody)) {
       reqs.push(client.trove.quotas.update(project_id, troveReqBody));
     }
@@ -565,10 +539,10 @@ export class ProjectStore extends Base {
   }
 
   @action
-  async updateProjectQuota({ project_id, data, current_quota }) {
+  async updateProjectQuota({ project_id, data }) {
     this.isSubmitting = true;
     try {
-      return await this.updateQuota(project_id, data, current_quota);
+      return await this.updateQuota(project_id, data);
     } finally {
       this.isSubmitting = false;
     }
@@ -738,21 +712,23 @@ export class ProjectStore extends Base {
     return isNil(used) || isNil(limit) ? null : Math.max(0, limit - used);
   }
 
+  canChangeMagnumQuota(projectId, rule) {
+    const { magnum_quota_project_id, magnum_cluster_id } = this.magnumQuota;
+    return (
+      this.enableMagnum &&
+      magnum_quota_project_id === projectId &&
+      (rule !== 'quota:delete' || !!magnum_cluster_id) &&
+      hasMagnumPolicy(rule, { project_id: projectId })
+    );
+  }
+
   @action
-  async resetProjectMagnumQuota(projectId) {
-    const target = { project_id: projectId };
-    if (
-      this.quota.magnum_quota_project_id !== projectId ||
-      !this.quota.magnum_cluster_id ||
-      !hasMagnumPolicy('quota:delete', target)
-    ) {
-      return;
-    }
+  async mutateMagnumQuota(projectId, mutate) {
     const { user, selectedRegion } = globalRootStore;
     const sameContext = () =>
       globalRootStore.user === user &&
       globalRootStore.selectedRegion === selectedRegion;
-    await globalMagnumQuotaStore.deleteOverride(projectId);
+    await mutate();
     if (!sameContext()) {
       return;
     }
@@ -763,13 +739,16 @@ export class ProjectStore extends Base {
     } catch (error) {
       readError = error.response?.status || true;
     }
-    if (!sameContext() || this.quota.magnum_quota_project_id !== projectId) {
+    if (
+      !sameContext() ||
+      this.magnumQuota.magnum_quota_project_id !== projectId
+    ) {
       return;
     }
     const { hard_limit: limit, id } = result || {};
-    const { magnum_cluster } = this.quota;
-    this.quota = {
-      ...this.quota,
+    const { magnum_cluster } = this.magnumQuota;
+    this.magnumQuota = {
+      ...this.magnumQuota,
       magnum_cluster_id: id,
       magnum_quota_project_id: result ? projectId : undefined,
       magnum_quota_error: readError,
@@ -779,6 +758,32 @@ export class ProjectStore extends Base {
         left: this.getRemainingMagnumQuota(limit, magnum_cluster.used),
       },
     };
+  }
+
+  saveProjectMagnumQuota(projectId, limit) {
+    const hasOverride = !!this.magnumQuota.magnum_cluster_id;
+    const rule = hasOverride ? 'quota:update' : 'quota:create';
+    if (!this.canChangeMagnumQuota(projectId, rule)) {
+      return Promise.reject(
+        new Error(
+          t('You are not allowed to {action}.', {
+            action: t('Edit Quota'),
+          })
+        )
+      );
+    }
+    return this.mutateMagnumQuota(projectId, () =>
+      globalMagnumQuotaStore.save(projectId, limit, hasOverride)
+    );
+  }
+
+  resetProjectMagnumQuota(projectId) {
+    if (!this.canChangeMagnumQuota(projectId, 'quota:delete')) {
+      return Promise.resolve();
+    }
+    return this.mutateMagnumQuota(projectId, () =>
+      globalMagnumQuotaStore.deleteOverride(projectId)
+    );
   }
 
   @action
