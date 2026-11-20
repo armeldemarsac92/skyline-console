@@ -15,6 +15,7 @@ import { StepAction } from 'src/containers/Action';
 import globalClusterTemplateStore from 'src/stores/magnum/clusterTemplates';
 import { toJS } from 'mobx';
 import { hasMagnumPolicy } from 'resources/magnum/capabilities';
+import { templateFlavor } from 'resources/magnum/lifecycle';
 import StepInfo from './StepInfo';
 import StepNodeSpec from './StepNodeSpec';
 import StepNetwork from './StepNetwork';
@@ -120,9 +121,16 @@ export class StepCreate extends StepAction {
       external_network_id: externalNetwork.selectedRowKeys[0],
       fixed_network: (fixedNetwork && fixedNetwork.selectedRowKeys[0]) || null,
       fixed_subnet: (fixedSubnet && fixedSubnet.selectedRowKeys[0]) || null,
-      flavor_id: (flavor && flavor.selectedRowKeys[0]) || null,
-      master_flavor_id:
-        (masterFlavor && masterFlavor.selectedRowKeys[0]) || null,
+      flavor_id: templateFlavor(
+        flavor,
+        rest.driver,
+        this.state.extra?.flavor_id
+      ),
+      master_flavor_id: templateFlavor(
+        masterFlavor,
+        rest.driver,
+        this.state.extra?.master_flavor_id
+      ),
       image_id: (images && images.selectedRowKeys[0]) || null,
       keypair_id: (keypair && keypair.selectedRowKeys[0]) || null,
     };

@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+export function templateFlavor(selection, driver, previous) {
+  const id = selection?.selectedRowKeys?.[0];
+  if (!id) return null;
+  const row = selection.selectedRows?.[0];
+  if (previous && (previous === id || previous === row?.name)) return previous;
+  return !driver || driver === 'k8s_capi_helm_v1' ? row?.name || id : id;
+}
+
 export function buildClusterBody(values) {
   const {
     additionalLabels = [],

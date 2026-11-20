@@ -126,17 +126,21 @@ export class StepNodeSpec extends Base {
         docker_volume_size,
       };
       if (flavor_id) {
+        const row = this.flavors.find(
+          (it) => it.id === flavor_id || it.name === flavor_id
+        );
         values.flavor = {
-          selectedRowKeys: [flavor_id],
-          selectedRows: this.flavors.filter((it) => it.id === flavor_id),
+          selectedRowKeys: [row?.id || flavor_id],
+          selectedRows: row ? [row] : [],
         };
       }
       if (master_flavor_id) {
+        const row = this.masterFlavors.find(
+          (it) => it.id === master_flavor_id || it.name === master_flavor_id
+        );
         values.masterFlavor = {
-          selectedRowKeys: [master_flavor_id],
-          selectedRows: this.masterFlavors.filter(
-            (it) => it.id === master_flavor_id
-          ),
+          selectedRowKeys: [row?.id || master_flavor_id],
+          selectedRows: row ? [row] : [],
         };
       }
       if (image_id) {
