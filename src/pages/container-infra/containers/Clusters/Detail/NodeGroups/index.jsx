@@ -220,7 +220,9 @@ export class NodeGroups extends Component {
             {group.pending && <Tag color="blue">{t('Request Accepted')}</Tag>}
             {(group.requestReason ||
               (isFailed(group) && group.status_reason)) && (
-              <span>{group.requestReason || group.status_reason}</span>
+              <div className={styles['cell-message']}>
+                {group.requestReason || group.status_reason}
+              </div>
             )}
           </Space>
         ),
@@ -526,7 +528,13 @@ export class NodeGroups extends Component {
     const blocked = this.busy || !canChangeGroup(group);
     const resizeRestriction =
       group.detailed && manualResizeRestriction(detail, group);
-    if (group.detailError) return <span role="alert">{group.detailError}</span>;
+    if (group.detailError) {
+      return (
+        <div className={styles['cell-message']} role="alert">
+          {group.detailError}
+        </div>
+      );
+    }
     return (
       <Space wrap>
         {group.detailed && (
@@ -661,7 +669,7 @@ export class NodeGroups extends Component {
     const scaling = autoscaling(detail);
     return (
       <Space direction="vertical" style={{ width: '100%' }}>
-        <Space wrap>
+        <Space className={styles.toolbar} wrap>
           {this.canMutate &&
             capi &&
             supported &&

@@ -3,3 +3,16 @@
 .panel {
   padding: 0 @body-padding @body-padding;
 }
+
+.toolbar {
+  max-width: 100%;
+
+  > :global(.ant-space-item) {
+    min-width: 0;
+  }
+}
+
+.cell-message {
+  max-width: 36ch;
+  overflow-wrap: anywhere;
+}
