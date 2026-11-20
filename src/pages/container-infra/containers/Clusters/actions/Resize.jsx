@@ -17,6 +17,7 @@ import { ModalAction } from 'containers/Action';
 import Notify from 'components/Notify';
 import client from 'client';
 import globalProjectStore from 'stores/keystone/project';
+import globalRootStore from 'stores/root';
 import { hasMagnumPolicy, isCapiHelm } from 'resources/magnum/capabilities';
 import {
   canChangeCluster,
@@ -24,6 +25,7 @@ import {
   canPatchCluster,
   canPatchResize,
   canShowGroup,
+  clusterBelongsToProject,
   isDefaultWorker,
   listGroups,
   magnumError,
@@ -50,11 +52,14 @@ export class Resize extends ModalAction {
     return 'middle';
   }
 
-  static allowed(cluster, { isAdminPage } = {}) {
+  static allowed(cluster) {
+    const admin = hasMagnumPolicy('context_is_admin');
     return (
       canChangeCluster(cluster) &&
+      (!cluster.project_id ||
+        clusterBelongsToProject(cluster, globalRootStore.projectId)) &&
       (hasMagnumPolicy('cluster:resize') ||
-        (canPatchCluster(cluster) && canPatchResize(isAdminPage)))
+        (canPatchCluster(cluster) && canPatchResize(admin)))
     );
   }
 
@@ -105,12 +110,10 @@ export class Resize extends ModalAction {
       const { magnum } = client;
       const id = this.item.uuid || this.item.id;
       const { nodeGroup } = this.containerProps;
-      const admin = this.isAdminPage || this.props.rootStore?.hasAdminRole;
+      const { projectId } = this.props.rootStore;
+      const admin = hasMagnumPolicy('context_is_admin');
       const patchOnly = !hasMagnumPolicy('cluster:resize');
-      if (
-        patchOnly &&
-        (!canPatchResize(admin) || !canPatchCluster(this.item))
-      ) {
+      if (patchOnly && !canPatchResize(admin)) {
         throw new Error(
           t('You do not have permission to resize this cluster.')
         );
@@ -124,12 +127,26 @@ export class Resize extends ModalAction {
         ? '1.8'
         : '1.7';
 
+      const item = this.item.project_id
+        ? this.item
+        : {
+            ...this.item,
+            ...(await magnum.clusters.show(id, null, versionOptions(version))),
+          };
+      const eligible = patchOnly
+        ? canPatchCluster(item)
+        : canChangeCluster(item);
+      if (!eligible || !clusterBelongsToProject(item, projectId)) {
+        throw new Error(
+          t('You do not have permission to resize this cluster.')
+        );
+      }
       const template =
-        this.item.template ||
-        (this.item.cluster_template_id
-          ? await magnum.clusterTemplates.show(this.item.cluster_template_id)
+        item.template ||
+        (item.cluster_template_id
+          ? await magnum.clusterTemplates.show(item.cluster_template_id)
           : undefined);
-      const cluster = { ...this.item, template };
+      const cluster = { ...item, template };
       let groups;
       if (hasGroups) {
         if (!canShowGroup(admin) || (!nodeGroup && !canListGroups(admin))) {
@@ -138,13 +155,13 @@ export class Resize extends ModalAction {
           );
         }
         const summaries = nodeGroup ? [nodeGroup] : await listGroups(id, '1.9');
-        const eligible = summaries.filter((group) => {
+        const eligibleGroups = summaries.filter((group) => {
           if (!group.uuid || !canChangeCluster(group)) return false;
           if (patchOnly) return isDefaultWorker(group);
           return group.role !== 'master' || isCapiHelm(cluster);
         });
         groups = await Promise.all(
-          eligible.map((group) => showGroup(id, group.uuid, '1.9'))
+          eligibleGroups.map((group) => showGroup(id, group.uuid, '1.9'))
         );
         groups = groups.filter(canChangeCluster);
       } else {
@@ -381,6 +398,9 @@ export class Resize extends ModalAction {
     nodes_to_remove: nodesToRemove,
   }) => {
     const { cluster, patchOnly, hasGroups, version } = this.state;
+    if (!clusterBelongsToProject(cluster, this.props.rootStore.projectId)) {
+      throw new Error(t('You do not have permission to resize this cluster.'));
+    }
     const id = cluster.uuid || cluster.id;
     const options = versionOptions(version);
     const group = this.group;

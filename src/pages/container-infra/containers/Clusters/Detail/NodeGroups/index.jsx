@@ -22,6 +22,7 @@ import {
   canPatchCluster,
   canPatchResize,
   canShowGroup,
+  clusterBelongsToProject,
   isDefaultWorker,
   isFailed,
   isInProgress,
@@ -31,7 +32,6 @@ import {
   showGroup,
   versionOptions,
 } from 'resources/magnum/nodegroups';
-import { isAdminPage } from 'utils';
 import Resize from '../../actions/Resize';
 import GroupForm from './GroupForm';
 
@@ -149,16 +149,12 @@ export class NodeGroups extends Component {
   }
 
   get adminContext() {
-    const { location, rootStore } = this.props;
-    return !!(isAdminPage(location?.pathname) || rootStore.hasAdminRole);
+    return hasMagnumPolicy('context_is_admin');
   }
 
   get canMutate() {
-    const { detail, location, rootStore } = this.props;
-    return (
-      !isAdminPage(location?.pathname) ||
-      (!!rootStore.projectId && detail.project_id === rootStore.projectId)
-    );
+    const { detail, rootStore } = this.props;
+    return clusterBelongsToProject(detail, rootStore.projectId);
   }
 
   get busy() {
@@ -329,6 +325,7 @@ export class NodeGroups extends Component {
   };
 
   saveGroup = async (values) => {
+    if (!this.canMutate) throw new Error(t('Unable to save the node group.'));
     const { modal, version } = this.state;
     const groups = client.magnum.clusters.nodegroups;
     if (modal.kind === 'create') {
@@ -385,12 +382,14 @@ export class NodeGroups extends Component {
 
   deleteGroup = async () => {
     const { modal, version, deleting } = this.state;
-    if (deleting || modal.group.is_default) return;
+    if (deleting || !this.canMutate || !this.canDeleteGroup(modal.group))
+      return;
     this.setState({ deleting: true, deleteError: undefined });
     try {
       await client.magnum.clusters.nodegroups.delete(
         this.clusterId,
         modal.group.uuid,
+        null,
         null,
         versionOptions(version)
       );
@@ -409,6 +408,14 @@ export class NodeGroups extends Component {
 
   closeModal = () => this.setState({ modal: undefined });
 
+  canDeleteGroup(group) {
+    return (
+      !group.is_default &&
+      !this.pending.has(group.uuid) &&
+      !['DELETE_IN_PROGRESS', 'DELETE_COMPLETE'].includes(group.status)
+    );
+  }
+
   applyPending(group, cluster) {
     const entry = this.pending.get(group.uuid);
     if (!entry) return group.missing ? undefined : group;
@@ -418,9 +425,15 @@ export class NodeGroups extends Component {
     const current = patch ? cluster : group;
     const previous = patch ? entry.cluster : entry.group;
     if (isInProgress(current)) entry.started = true;
+    // The first read can still show the previous failure while Magnum queues the retry.
+    const deleteFailed =
+      entry.operation === 'delete' && current.status === 'DELETE_FAILED';
+    const repeatedFailure = deleteFailed && entry.deleteFailed;
+    entry.deleteFailed = deleteFailed;
     const failed =
       isFailed(current) &&
       (entry.started ||
+        repeatedFailure ||
         current.status !== previous.status ||
         current.status_reason !== previous.status_reason);
     const completed =
@@ -475,7 +488,6 @@ export class NodeGroups extends Component {
               isAllowed={!blocked && (!canPatch || canPatchCluster(detail))}
               needHide={false}
               containerProps={{
-                isAdminPage: this.adminContext,
                 nodeGroup: group,
                 onResizeAccepted: (current, count, patchOnly) =>
                   this.accepted(
@@ -506,7 +518,7 @@ export class NodeGroups extends Component {
             <Button
               type="link"
               danger
-              disabled={this.busy || isInProgress(group)}
+              disabled={!this.canDeleteGroup(group)}
               onClick={() => this.showModal('delete', group)}
             >
               {t('Delete')}

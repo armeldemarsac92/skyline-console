@@ -102,7 +102,7 @@ export default function GroupForm({ cluster, group, close, submit }) {
             : {
                 role: 'worker',
                 node_count: 1,
-                min_node_count: scaling === true ? 1 : undefined,
+                min_node_count: scaling === false ? undefined : 1,
                 max_node_count: scaling === true ? 1 : undefined,
               }
         }

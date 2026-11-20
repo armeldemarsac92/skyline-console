@@ -19,6 +19,8 @@ export const canChangeCluster = ({ status } = {}) =>
   eligibleStates.includes(status);
 export const canPatchCluster = (cluster) =>
   canChangeCluster(cluster) && cluster.status !== 'UPDATE_FAILED';
+export const clusterBelongsToProject = (cluster, projectId) =>
+  Boolean(projectId && cluster.project_id === projectId);
 export const isDefaultWorker = ({ role, is_default: isDefault }) =>
   isDefault === true && role === 'worker';
 export const isInProgress = ({ status } = {}) =>

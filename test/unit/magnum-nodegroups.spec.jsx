@@ -96,10 +96,10 @@ describe('Magnum node groups', () => {
     wrapper.update();
   };
 
-  const mountGroups = async (props = {}) => {
+  const mountGroups = async (props = {}, systemRole = {}) => {
     await settle(() => {
       wrapper = mount(
-        <Provider rootStore={{ projectId: 'project-1' }}>
+        <Provider rootStore={{ projectId: 'project-1', ...systemRole }}>
           <NodeGroups
             detail={cluster}
             refreshDetail={refreshDetail}
@@ -123,14 +123,14 @@ describe('Magnum node groups', () => {
   const submit = () =>
     document.querySelector('.ant-modal-footer .ant-btn-primary').click();
 
-  const mountListResize = async () => {
+  const mountListResize = async (item = cluster) => {
     await settle(() => {
       wrapper = mount(
         <Provider rootStore={{ projectId: 'project-1' }}>
           <ActionButton
             id="resize-cluster"
             title="Resize Cluster"
-            item={cluster}
+            item={item}
             action={Resize}
             actionType="modal"
             isAllowed
@@ -151,7 +151,7 @@ describe('Magnum node groups', () => {
     });
     global.t = (message, values = {}) =>
       message.replace(/\{(\w+)\}/g, (match, key) => values[key] ?? match);
-    hasMagnumPolicy.mockReturnValue(true);
+    hasMagnumPolicy.mockImplementation((rule) => rule !== 'context_is_admin');
     refreshDetail = jest.fn();
     jest.spyOn(globalProjectStore, 'fetchProjectNovaQuota').mockResolvedValue({
       instances: { left: 1, limit: 10, used: 9 },
@@ -302,12 +302,13 @@ describe('Magnum node groups', () => {
 
   it('selects the destination group from the existing cluster list action', async () => {
     http = mockMagnum(({ method, path }) => {
+      if (method === 'GET' && path === clusterPath) return { data: cluster };
       if (method === 'GET') return read(path);
       if (method === 'POST' && path === resizePath)
         return { status: 202, data: { uuid: 'cluster-uuid' } };
       return undefined;
     });
-    await mountListResize();
+    await mountListResize({ ...cluster, project_id: undefined });
     const selector = wrapper
       .find(Select)
       .filterWhere((item) => item.prop('id')?.endsWith('nodegroup'));
@@ -362,7 +363,9 @@ describe('Magnum node groups', () => {
       }
       return undefined;
     });
-    await mountGroups();
+    await mountGroups({
+      detail: { ...cluster, template: { driver: cluster.template.driver } },
+    });
     await settle(() => button(wrapper, 'Create Node Group').simulate('click'));
     const field = (idPart) => wrapper.find(`input[id="${idPart}"]`);
     await settle(() =>
@@ -405,6 +408,7 @@ describe('Magnum node groups', () => {
           role: 'worker',
           node_count: 1,
           flavor_id: 'compute.large',
+          min_node_count: 1,
         },
       },
       {
@@ -414,5 +418,88 @@ describe('Magnum node groups', () => {
       },
       { method: 'DELETE', path: `${base}/${id}`, body: null },
     ]);
+    const deletion = http.requests.find(({ method }) => method === 'DELETE');
+    expect(deletion.headers['OpenStack-API-Version']).toBe(
+      'container-infra 1.14'
+    );
+    expect(deletion.params).toEqual({});
+  });
+
+  it('reads own groups with a system reader role and project-scoped Magnum policies', async () => {
+    hasMagnumPolicy.mockImplementation((rule) =>
+      ['nodegroup:get_all', 'nodegroup:get', 'cluster:resize'].includes(rule)
+    );
+    http = mockMagnum(({ method, path }) => method === 'GET' && read(path));
+    await mountGroups(
+      {
+        location: {
+          pathname: '/container-infra-admin/clusters-admin/cluster-uuid',
+        },
+      },
+      {
+        hasAdminRole: true,
+        roles: [{ name: 'reader' }, { name: 'member' }],
+      }
+    );
+    expect(row('compute-uuid').text()).toContain('compute.large');
+    expect(button(row('compute-uuid'), 'Resize')).toHaveLength(1);
+  });
+
+  it('shows a foreign project cluster as read-only in the project view', async () => {
+    hasMagnumPolicy.mockReturnValue(true);
+    http = mockMagnum(({ method, path }) => method === 'GET' && read(path));
+    await mountGroups({ detail: { ...cluster, project_id: 'project-2' } });
+    expect(button(row('compute-uuid'), 'Detail')).toHaveLength(1);
+    expect(button(row('compute-uuid'), 'Resize')).toHaveLength(0);
+    expect(button(row('compute-uuid'), 'Edit Bounds')).toHaveLength(0);
+    expect(button(row('compute-uuid'), 'Delete')).toHaveLength(0);
+    expect(button(wrapper, 'Create Node Group')).toHaveLength(0);
+  });
+
+  it('loads project ownership for a cluster list row before permitting resize', async () => {
+    http = mockMagnum(({ method, path }) => {
+      if (method !== 'GET') return undefined;
+      if (path === clusterPath)
+        return { data: { ...cluster, project_id: 'project-2' } };
+      return read(path);
+    });
+    await mountListResize({ ...cluster, project_id: undefined });
+    expect(document.body.textContent).toContain(
+      'You do not have permission to resize this cluster.'
+    );
+    expect(
+      http.requests.map(({ method, path }) => [method, path])
+    ).toContainEqual(['GET', clusterPath]);
+    expect(sizeInput()).toBeNull();
+  });
+
+  it('allows cleanup of a failed pool and stops tracking a confirmed repeat failure', async () => {
+    const id = 'compute-uuid';
+    http = mockMagnum(({ method, path }) => {
+      if (method === 'GET')
+        return read(
+          path,
+          groups.map((group) =>
+            group.uuid === id
+              ? {
+                  ...group,
+                  status: 'DELETE_FAILED',
+                  status_reason: 'The worker is still in use',
+                }
+              : group
+          )
+        );
+      if (method === 'DELETE' && path === `${base}/${id}`)
+        return { status: 204 };
+      return undefined;
+    });
+    await mountGroups({ detail: { ...cluster, status: 'CREATE_FAILED' } });
+    expect(button(row(id), 'Delete').prop('disabled')).toBe(false);
+    await settle(() => button(row(id), 'Delete').simulate('click'));
+    await settle(submit);
+    await settle(() => button(wrapper, 'Refresh').simulate('click'));
+    expect(row(id).text()).toContain('The worker is still in use');
+    expect(row(id).text()).not.toContain('Request Accepted');
+    expect(button(row(id), 'Delete').prop('disabled')).toBe(false);
   });
 });
