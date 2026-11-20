@@ -83,7 +83,6 @@ export class HttpRequest {
         ...config.headers,
         ...headers,
       };
-      console.log('new config headers', config.headers);
     }
     if (isFormData) {
       delete config.headers['Content-Type'];
