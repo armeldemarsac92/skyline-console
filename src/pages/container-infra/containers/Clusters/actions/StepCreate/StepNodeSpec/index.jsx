@@ -22,6 +22,7 @@ import { defaultTip } from 'resources/magnum/cluster';
 import { getKeyPairHeader } from 'resources/nova/keypair';
 import { getBaseSimpleFlavorColumns } from 'resources/magnum/template';
 import { allSettled } from 'utils';
+import client from 'client';
 
 export class StepNodeSpec extends Base {
   init() {
@@ -48,6 +49,9 @@ export class StepNodeSpec extends Base {
       this.getFlavors(),
       this.getMasterFlavors(),
       this.getTemplateDetail(),
+      client.magnum
+        .supportsVersion('1.10')
+        .then((zeroSupported) => this.setState({ zeroSupported })),
     ]);
     this.updateDefaultValue();
   }
@@ -97,7 +101,7 @@ export class StepNodeSpec extends Base {
 
     return {
       master_count: master_count || 1,
-      node_count: node_count || 1,
+      node_count: node_count ?? 1,
       masterFlavor: masterFlavor || {
         selectedRowKeys: master_flavor_id ? [master_flavor_id] : [],
         selectedRows: this.masterFlavors.filter(
@@ -143,7 +147,6 @@ export class StepNodeSpec extends Base {
         name: 'keypair',
         label: t('Keypair'),
         type: 'select-table',
-        required: true,
         data: this.keypairs,
         initValue: initKeyPair || templateInitKeypair,
         isLoading: this.keyPairStore.list.isLoading,
@@ -173,6 +176,7 @@ export class StepNodeSpec extends Base {
         label: t('Number of Master Nodes'),
         type: 'input-int',
         min: 1,
+        step: 2,
         required: true,
         onChange: (value) => {
           this.updateContext({
@@ -209,7 +213,7 @@ export class StepNodeSpec extends Base {
         name: 'node_count',
         label: t('Number of Nodes'),
         type: 'input-int',
-        min: 1,
+        min: this.state.zeroSupported ? 0 : 1,
         required: true,
         onChange: (value) => {
           this.updateContext({

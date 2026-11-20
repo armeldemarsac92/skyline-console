@@ -17,6 +17,8 @@ import { isEmpty } from 'lodash';
 import { inject, observer } from 'mobx-react';
 import React from 'react';
 
+import { renderMagnumFlavor } from 'resources/magnum/template';
+
 export class BaseDetail extends Base {
   get leftCards() {
     return [this.templateCard, this.networkCard, this.miscellaneousCard];
@@ -159,39 +161,10 @@ export class BaseDetail extends Base {
   }
 
   get nodesCard() {
-    const {
-      master_flavor_id,
-      original_master_flavor_id,
-      masterFlavor: { name: masterFlavorName } = {},
-      flavor_id,
-      original_flavor_id,
-      flavor: { name: flavorName } = {},
-    } = this.detailData;
-
-    const masterFlavorUrl = original_master_flavor_id
-      ? `${original_master_flavor_id} (${t('The resource has been deleted')})`
-      : master_flavor_id
-      ? this.getLinkRender(
-          'flavorDetail',
-          masterFlavorName || master_flavor_id,
-          {
-            id: master_flavor_id,
-          }
-        )
-      : '-';
-
-    const flavorUrl = original_flavor_id
-      ? `${original_flavor_id} (${t('The resource has been deleted')})`
-      : flavor_id
-      ? this.getLinkRender('flavorDetail', flavorName || flavor_id, {
-          id: flavor_id,
-        })
-      : '-';
-
     const options = [
       {
         label: t('Master Node Flavor'),
-        content: masterFlavorUrl,
+        content: renderMagnumFlavor(this, true),
       },
       {
         label: t('Number of Master Nodes'),
@@ -199,7 +172,7 @@ export class BaseDetail extends Base {
       },
       {
         label: t('Node Flavor'),
-        content: flavorUrl,
+        content: renderMagnumFlavor(this),
       },
       {
         label: t('Number of Nodes'),

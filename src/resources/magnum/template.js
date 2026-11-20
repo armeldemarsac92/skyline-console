@@ -14,6 +14,21 @@
 
 import { flavorArchitectures, flavorCategoryList } from 'resources/nova/flavor';
 import { formatSize } from 'utils';
+import { isCapiHelm } from './capabilities';
+
+export function renderMagnumFlavor(view, master = false) {
+  const detail = view.detailData;
+  const key = master ? 'master_flavor_id' : 'flavor_id';
+  const ref = detail[key];
+  const removed = detail[`original_${key}`];
+  if (removed) return `${removed} (${t('The resource has been deleted')})`;
+  if (!ref) return '-';
+  const flavor = master ? detail.masterFlavor : detail.flavor;
+  if (isCapiHelm(detail) && !flavor?.id) return ref;
+  return view.getLinkRender('flavorDetail', flavor?.name || ref, {
+    id: flavor?.id || ref,
+  });
+}
 
 export const getBaseTemplateColumns = (self) => [
   {

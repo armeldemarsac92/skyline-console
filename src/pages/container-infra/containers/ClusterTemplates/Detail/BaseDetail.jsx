@@ -15,6 +15,8 @@ import Base from 'containers/BaseDetail';
 import { inject, observer } from 'mobx-react';
 import { isEmpty } from 'lodash';
 
+import { renderMagnumFlavor } from 'resources/magnum/template';
+
 export class BaseDetail extends Base {
   get leftCards() {
     return [this.baseInfoCard, this.networkCard];
@@ -165,12 +167,6 @@ export class BaseDetail extends Base {
       image: { name: imageName } = {},
       keypair_id,
       original_keypair_id,
-      flavor_id,
-      original_flavor_id,
-      flavor: { name: flavorName } = {},
-      master_flavor_id,
-      original_master_flavor_id,
-      masterFlavor: { name: masterFlavorName } = {},
     } = this.detailData;
     const imageUrl = original_image_id
       ? `${original_image_id} (${t('The resource has been deleted')})`
@@ -188,26 +184,6 @@ export class BaseDetail extends Base {
         })
       : '-';
 
-    const flavorUrl = original_flavor_id
-      ? `${original_flavor_id} (${t('The resource has been deleted')})`
-      : flavor_id
-      ? this.getLinkRender('flavorDetail', flavorName || flavor_id, {
-          id: flavor_id,
-        })
-      : '-';
-
-    const masterFlavorUrl = original_master_flavor_id
-      ? `${original_master_flavor_id} (${t('The resource has been deleted')})`
-      : master_flavor_id
-      ? this.getLinkRender(
-          'flavorDetail',
-          masterFlavorName || master_flavor_id,
-          {
-            id: master_flavor_id,
-          }
-        )
-      : '-';
-
     const options = [
       {
         label: t('Image'),
@@ -220,11 +196,11 @@ export class BaseDetail extends Base {
       },
       {
         label: t('Node Flavor'),
-        content: flavorUrl,
+        content: renderMagnumFlavor(this),
       },
       {
         label: t('Master Node Flavor'),
-        content: masterFlavorUrl,
+        content: renderMagnumFlavor(this, true),
       },
       {
         label: t('Volume Driver'),

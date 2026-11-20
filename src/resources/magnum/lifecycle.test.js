@@ -6,7 +6,12 @@ import { mockMagnum } from '../../../test/unit/magnum';
 
 jest.mock('client', () => ({
   magnum: require('client/magnum').default,
-  nova: { keypairs: { list: async () => ({ keypairs: [] }) } },
+  nova: {
+    keypairs: { list: async () => ({ keypairs: [] }) },
+    flavors: {
+      list: async () => ({ flavors: [{ id: 'nova-id', name: 'compute' }] }),
+    },
+  },
   heat: {
     stacks: {
       list: jest.fn(async ({ id }) => ({
@@ -60,9 +65,11 @@ it('keeps the Heat stack link for legacy clusters and treats the CAPI release na
     const capi = await store.detailDidFetch({
       cluster_template_id: 'capi',
       stack_id: 'helm-release',
+      flavor_id: 'compute',
     });
     expect(heat.stack.id).toBe('stack-uuid');
     expect(capi.stack).toBeUndefined();
+    expect(capi.flavor?.id).toBe('nova-id');
     expect(client.heat.stacks.list).toHaveBeenCalledTimes(1);
   } finally {
     http.restore();
@@ -86,6 +93,33 @@ it('submits a global Kubernetes upgrade with only the model UUID and the support
     expect(http.requests[0]).toMatchObject({
       headers: { 'OpenStack-API-Version': 'container-infra 1.8' },
       body: { cluster_template: 'target-id' },
+    });
+  } finally {
+    http.restore();
+  }
+});
+
+it('creates a CAPI cluster with zero manual workers using microversion 1.10', async () => {
+  const http = mockMagnum(
+    ({ method, path }) =>
+      method === 'POST' &&
+      path === '/v1/clusters' && { status: 202, data: { uuid: 'empty' } }
+  );
+  try {
+    const template = {
+      driver: 'k8s_capi_helm_v1',
+      labels: { auto_scaling_enabled: 'true' },
+    };
+    const form = {
+      node_count: 0,
+      clusterTemplate: { selectedRowKeys: ['tmpl'], selectedRows: [template] },
+    };
+    expect(() => buildClusterBody(form)).toThrow();
+    const body = buildClusterBody({ ...form, auto_scaling_enabled: 'false' });
+    await new ClustersStore().create(body);
+    expect(http.requests[0]).toMatchObject({
+      body: { node_count: 0 },
+      headers: { 'OpenStack-API-Version': 'container-infra 1.10' },
     });
   } finally {
     http.restore();

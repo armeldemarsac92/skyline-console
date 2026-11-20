@@ -1,4 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
+import { isCapiHelm } from './capabilities';
+
+export async function resolveCapiFlavors(item, template, nova) {
+  if (!isCapiHelm(template) || (!item.flavor_id && !item.master_flavor_id))
+    return {};
+  const { flavors = [] } = await nova.flavors.list();
+  const find = (ref) =>
+    flavors.find((flavor) => flavor.id === ref || flavor.name === ref);
+  return {
+    flavor: find(item.flavor_id),
+    masterFlavor: find(item.master_flavor_id),
+  };
+}
+
 export function templateFlavor(selection, driver, previous) {
   const id = selection?.selectedRowKeys?.[0];
   if (!id) return null;
@@ -34,6 +48,18 @@ export function buildClusterBody(values) {
   if (Object.keys(labels).length) {
     body.labels = labels;
     body.merge_labels = labelMode === 'merge';
+  }
+  const template = clusterTemplate?.selectedRows?.[0];
+  if (body.node_count === 0 && template?.driver === 'k8s_capi_helm_v1') {
+    const autoscaling =
+      labels.auto_scaling_enabled ?? template.labels?.auto_scaling_enabled;
+    if (String(autoscaling).toLowerCase() !== 'false') {
+      throw new Error(
+        t(
+          'Disable autoscaling explicitly to create a CAPI cluster with zero workers.'
+        )
+      );
+    }
   }
   const selected = (field) => field?.selectedRowKeys?.[0] || null;
   return {

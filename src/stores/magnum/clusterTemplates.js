@@ -18,6 +18,20 @@ import { action } from 'mobx';
 import { isBoolean, isEqual } from 'lodash';
 import { allSettled } from 'utils';
 import { listAll } from 'client/magnum';
+import { resolveCapiFlavors } from 'resources/magnum/lifecycle';
+
+// Magnum's JSON Patch parser decodes the text of /labels with Python literal_eval.
+function encodeLabels(labels) {
+  const items = Object.entries(labels).map(([name, value]) => {
+    const literal = isBoolean(value)
+      ? value
+        ? 'True'
+        : 'False'
+      : JSON.stringify(value);
+    return `${JSON.stringify(name)}:${literal}`;
+  });
+  return `{${items.join(',')}}`;
+}
 
 export class ClusterTemplatesStore extends Base {
   get client() {
@@ -79,7 +93,7 @@ export class ClusterTemplatesStore extends Base {
       } else {
         const encoded =
           key === 'labels'
-            ? JSON.stringify(value)
+            ? encodeLabels(value)
             : isBoolean(value)
             ? String(value)
             : value;
@@ -120,15 +134,17 @@ export class ClusterTemplatesStore extends Base {
   }
 
   async detailDidFetch(item) {
-    const [kp = {}, ext = {}, fx = {}, sub = {}, img] = await allSettled([
-      client.nova.keypairs.list(),
-      item.external_network_id
-        ? this.networkClient.show(item.external_network_id)
-        : {},
-      item.fixed_network ? this.networkClient.show(item.fixed_network) : {},
-      item.fixed_subnet ? this.subnetClient.show(item.fixed_subnet) : {},
-      item.image_id ? this.imageClient.show(item.image_id) : {},
-    ]);
+    const [kp = {}, ext = {}, fx = {}, sub = {}, img, flavors] =
+      await allSettled([
+        client.nova.keypairs.list(),
+        item.external_network_id
+          ? this.networkClient.show(item.external_network_id)
+          : {},
+        item.fixed_network ? this.networkClient.show(item.fixed_network) : {},
+        item.fixed_subnet ? this.subnetClient.show(item.fixed_subnet) : {},
+        item.image_id ? this.imageClient.show(item.image_id) : {},
+        resolveCapiFlavors(item, item, client.nova),
+      ]);
     if (kp.status === 'fulfilled') {
       const { keypairs = [] } = kp.value;
       const keypair = keypairs.find(
@@ -167,7 +183,7 @@ export class ClusterTemplatesStore extends Base {
       item.image_id = null;
     }
 
-    return item;
+    return { ...item, ...flavors.value };
   }
 }
 

@@ -42,3 +42,23 @@ it('creates a Kubernetes template and updates a referenced template with a singl
     http.restore();
   }
 });
+
+it('encodes native booleans separately from text in Magnum label patches', async () => {
+  const http = mockMagnum(() => ({ data: {} }));
+  try {
+    const store = new ClusterTemplatesStore();
+    await store.update(
+      { id: 'model', original: { labels: { enabled: true } } },
+      { labels: { enabled: true, label: 'true', retries: 2 } }
+    );
+    expect(http.requests[0].body).toEqual([
+      {
+        path: '/labels',
+        op: 'replace',
+        value: '{"enabled":True,"label":"true","retries":2}',
+      },
+    ]);
+  } finally {
+    http.restore();
+  }
+});

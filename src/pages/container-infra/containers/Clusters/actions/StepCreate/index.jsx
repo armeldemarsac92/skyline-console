@@ -316,7 +316,7 @@ export class StepCreate extends StepAction {
     return '';
   }
 
-  onSubmit = (values) => this.store.create(buildClusterBody(values));
+  onSubmit = async (values) => this.store.create(buildClusterBody(values));
 }
 
 export default inject('rootStore')(observer(StepCreate));

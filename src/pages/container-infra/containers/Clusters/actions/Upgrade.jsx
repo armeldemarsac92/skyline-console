@@ -25,12 +25,12 @@ export class Upgrade extends ModalAction {
 
   static policy = 'cluster:upgrade';
 
-  static allowed = async (item, containerProps) => {
+  static allowed = async (item) => {
     if (
       !isCapiHelm(item) ||
       !/_COMPLETE$/.test(item.status) ||
       !hasMagnumPolicy('cluster:upgrade') ||
-      (containerProps?.isAdminPage &&
+      (hasMagnumPolicy('context_is_admin') &&
         !hasMagnumPolicy('cluster:upgrade_all_projects'))
     )
       return false;
@@ -64,19 +64,49 @@ export class Upgrade extends ModalAction {
     );
   }
 
-  selectTarget = async (selection) => {
+  get name() {
+    return t('Upgrade Cluster');
+  }
+
+  get isAsyncAction() {
+    return true;
+  }
+
+  get disableSubmit() {
+    return (
+      super.disableSubmit ||
+      this.state.checkingImage ||
+      this.state.incompatibleImage
+    );
+  }
+
+  unMountActions = () => {
+    this.selectedTemplateId = undefined;
+  };
+
+  selectTarget = (selection) => {
     const [template] = selection?.selectedRows || [];
     this.selectedTemplateId = template?.uuid;
-    this.setState({ kubeVersion: undefined, incompatibleImage: false });
+    this.imageCheck = undefined;
+    this.setState({
+      checkingImage: !!template?.image_id,
+      kubeVersion: undefined,
+      incompatibleImage: false,
+    });
     if (!template?.image_id) return;
-    try {
-      const image = await client.glance.images.show(template.image_id);
-      if (this.selectedTemplateId !== template.uuid) return;
-      const version = image.kube_version || image.properties?.kube_version;
-      this.setState({ kubeVersion: version, incompatibleImage: !version });
-    } catch {
-      // Magnum also validates the image when the user cannot read its metadata.
-    }
+    this.imageCheck = client.glance.images.show(template.image_id).then(
+      (image) => {
+        const kubeVersion =
+          image.kube_version || image.properties?.kube_version;
+        return { kubeVersion, incompatibleImage: !kubeVersion };
+      },
+      // A private image can be usable by Magnum without exposing metadata to Skyline.
+      (error) => ({ incompatibleImage: error.response?.status === 404 })
+    );
+    this.imageCheck.then((result) => {
+      if (this.selectedTemplateId === template.uuid)
+        this.setState({ checkingImage: false, ...result });
+    });
   };
 
   get formItems() {
@@ -123,17 +153,14 @@ export class Upgrade extends ModalAction {
     ];
   }
 
-  onSubmit = (values) => {
-    if (this.state.incompatibleImage)
-      return Promise.reject(
-        new Error(t('The image is missing the kube_version property.'))
-      );
-    const { clusterTemplate } = values;
-    const { selectedRowKeys = [] } = clusterTemplate;
-    const data = {
-      cluster_template: selectedRowKeys[0],
-    };
-    return this.store.upgrade({ id: this.item.id }, data);
+  onSubmit = async ({ clusterTemplate }) => {
+    const [id] = clusterTemplate.selectedRowKeys;
+    if (id !== this.selectedTemplateId) this.selectTarget(clusterTemplate);
+    const result = await this.imageCheck;
+    if (!id || this.selectedTemplateId !== id || result?.incompatibleImage) {
+      throw new Error(t('The image is missing the kube_version property.'));
+    }
+    return this.store.upgrade({ id: this.item.id }, { cluster_template: id });
   };
 }
 

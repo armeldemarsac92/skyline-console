@@ -17,7 +17,8 @@ import client from 'client';
 import { action } from 'mobx';
 import { allSettled } from 'utils';
 import { listAll } from 'client/magnum';
-import { isCapiHelm } from 'resources/magnum/capabilities';
+import { hasMagnumPolicy, isCapiHelm } from 'resources/magnum/capabilities';
+import { resolveCapiFlavors } from 'resources/magnum/lifecycle';
 
 export class ClustersStore extends Base {
   get client() {
@@ -54,7 +55,11 @@ export class ClustersStore extends Base {
 
   @action
   async create(newbody) {
-    return this.submitting(this.client.create(newbody));
+    const options =
+      newbody.node_count === 0
+        ? client.magnum.versionOptions('1.10')
+        : undefined;
+    return this.submitting(this.client.create(newbody, null, options));
   }
 
   @action
@@ -84,10 +89,24 @@ export class ClustersStore extends Base {
     const newData = await this.listDidFetchProject(items, {
       all_projects: shouldFetchProject,
     });
-    const { keypairs = [] } = (await client.nova.keypairs.list()) || {};
+    const [keys, templates] = await allSettled([
+      client.nova.keypairs.list(),
+      hasMagnumPolicy('cluster:upgrade') &&
+      hasMagnumPolicy('clustertemplate:get_all')
+        ? listAll(
+            (params) => this.templateClient.list(params),
+            'clustertemplates'
+          )
+        : Promise.resolve([]),
+    ]);
+    const keypairs = keys.value?.keypairs || [];
+    const models = new Map(
+      (templates.value || []).map((model) => [model.uuid, model])
+    );
     return newData.map((it) => {
+      it.template = models.get(it.cluster_template_id);
       const keypair = keypairs.find((k) => k?.keypair?.name === it.keypair);
-      if (!keypair) {
+      if (keys.status === 'fulfilled' && !keypair) {
         it.original_keypair = it.keypair;
         it.keypair = null;
       }
@@ -105,13 +124,14 @@ export class ClustersStore extends Base {
     } = template;
     const fixedNetworkId = item.fixed_network || templateFixedNetworkId;
     const fixedSubnetId = item.fixed_subnet || templateSubnetId;
-    const [kp = {}, fx = {}, sub = {}, stack] = await allSettled([
+    const [kp = {}, fx = {}, sub = {}, stack, flavors] = await allSettled([
       client.nova.keypairs.list(),
       fixedNetworkId ? this.networkClient.show(fixedNetworkId) : {},
       fixedSubnetId ? this.subnetClient.show(fixedSubnetId) : {},
       item.stack_id && !isCapiHelm(template)
         ? this.stackClient.list({ id: item.stack_id })
         : {},
+      resolveCapiFlavors(item, template, client.nova),
     ]);
     if (kp.status === 'fulfilled') {
       const { keypairs = [] } = kp.value;
@@ -142,7 +162,7 @@ export class ClustersStore extends Base {
       }
     }
 
-    return item;
+    return { ...item, ...flavors.value };
   }
 
   get mapper() {
