@@ -40,7 +40,7 @@ L’API monte également un contrôleur de fédérations. Le plugin stable étud
 
 | Composant | Révision étudiée |
 |---|---|
-| Fork Skyline Console, `main` | [`5a8ca40e`](https://github.com/armeldemarsac92/skyline-console/blob/5a8ca40e86cbcbacf725b38fc14ca5acbed1e19a/src/client/magnum/index.js), incluant la stable officielle `9b839364` |
+| Fork Skyline Console, `master` | [`5a8ca40e`](https://github.com/armeldemarsac92/skyline-console/blob/5a8ca40e86cbcbacf725b38fc14ca5acbed1e19a/src/client/magnum/index.js), incluant la stable officielle `9b839364` |
 | API et conducteur Magnum, `stable/2026.2` | [`68befbf8`](https://opendev.org/openstack/magnum/src/commit/68befbf84e8ec50e57dee682cea9398bba606904/magnum/api/controllers/v1) |
 | Plugin `python-magnumclient`, `stable/2026.2` | [`cf374db1`](https://opendev.org/openstack/python-magnumclient/src/commit/cf374db1a93cc0fe8d326a61333837e3b7eeb0e9/magnumclient/osc/v1) |
 | Pilote officiel `magnum-capi-helm` (publication indépendante) | [Tag `1.4.0`, commit `a8b82c24`](https://opendev.org/openstack/magnum-capi-helm/src/commit/a8b82c2480a286a10b60ecc1d94c6cd9f1d01823/magnum_capi_helm/driver.py) · [Versions officielles OpenStack](https://releases.openstack.org/teams/magnum.html#magnum-capi-helm) |

@@ -28,34 +28,52 @@ export class StepManagement extends Base {
   get defaultValue() {
     return {
       create_timeout: 60,
+      auto_healing_enabled: 'inherit',
+      auto_scaling_enabled: 'inherit',
     };
   }
 
   get formItems() {
+    const options = [
+      { label: t('Inherit from template'), value: 'inherit' },
+      { label: t('Enabled'), value: 'true' },
+      { label: t('Disabled'), value: 'false' },
+    ];
     return [
       {
         name: 'auto_healing_enabled',
         label: t('Auto Healing'),
-        type: 'check',
-        content: t('Automatically repair unhealhty nodes'),
-      },
-      {
-        type: 'divider',
+        type: 'select',
+        options,
       },
       {
         name: 'auto_scaling_enabled',
         label: t('Auto Scaling'),
-        type: 'check',
-        content: t('Auto scaling feature will be enabled'),
+        type: 'select',
+        options,
       },
       {
-        type: 'divider',
+        name: 'discovery_url',
+        label: t('Discovery URL'),
+        type: 'input',
+        tip: t(
+          'Recorded by Magnum. CAPI Helm manages discovery through Cluster API.'
+        ),
+      },
+      {
+        name: 'docker_volume_size',
+        label: t('Docker Volume Size (GiB)'),
+        type: 'input-int',
+        min: 1,
+        tip: t(
+          'Recorded by Magnum. CAPI Helm uses the boot volume settings from the cluster and template.'
+        ),
       },
       {
         name: 'create_timeout',
         label: t('Timeout (Minute)'),
         type: 'input-int',
-        min: 1,
+        min: 0,
         tip: t('The timeout for cluster creation in minutes.'),
       },
     ];

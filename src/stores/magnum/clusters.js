@@ -16,6 +16,8 @@ import Base from 'stores/base';
 import client from 'client';
 import { action } from 'mobx';
 import { allSettled } from 'utils';
+import { listAll } from 'client/magnum';
+import { isCapiHelm } from 'resources/magnum/capabilities';
 
 export class ClustersStore extends Base {
   get client() {
@@ -42,6 +44,14 @@ export class ClustersStore extends Base {
     return true;
   }
 
+  requestListAll(params) {
+    return listAll(
+      (query) => this.listFetchByClient(query),
+      'clusters',
+      params
+    );
+  }
+
   @action
   async create(newbody) {
     return this.submitting(this.client.create(newbody));
@@ -60,7 +70,12 @@ export class ClustersStore extends Base {
   }
 
   async upgrade({ id }, body) {
-    return this.client.upgrade(id, body);
+    return this.client.upgrade(
+      id,
+      body,
+      null,
+      client.magnum.versionOptions('1.8')
+    );
   }
 
   async listDidFetch(items, _, filters) {
@@ -94,7 +109,9 @@ export class ClustersStore extends Base {
       client.nova.keypairs.list(),
       fixedNetworkId ? this.networkClient.show(fixedNetworkId) : {},
       fixedSubnetId ? this.subnetClient.show(fixedSubnetId) : {},
-      item.stack_id ? this.stackClient.list({ id: item.stack_id }) : {},
+      item.stack_id && !isCapiHelm(template)
+        ? this.stackClient.list({ id: item.stack_id })
+        : {},
     ]);
     if (kp.status === 'fulfilled') {
       const { keypairs = [] } = kp.value;

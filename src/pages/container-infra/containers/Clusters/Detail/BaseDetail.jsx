@@ -23,7 +23,7 @@ export class BaseDetail extends Base {
   }
 
   get rightCards() {
-    return [this.nodesCard, this.labelCard, this.stackCard];
+    return [this.nodesCard, this.labelCard, this.stackCard, this.healthCard];
   }
 
   get templateCard() {
@@ -88,6 +88,16 @@ export class BaseDetail extends Base {
         label: t('Fixed Subnet'),
         content: subnetUrl,
       },
+      {
+        label: t('Floating IP Enabled'),
+        dataIndex: 'floating_ip_enabled',
+        valueRender: 'yesNo',
+      },
+      {
+        label: t('Master Node LB Enabled'),
+        dataIndex: 'master_lb_enabled',
+        valueRender: 'yesNo',
+      },
     ];
 
     return {
@@ -108,6 +118,7 @@ export class BaseDetail extends Base {
       : '-';
 
     const options = [
+      { label: t('Container Version'), dataIndex: 'container_version' },
       {
         label: t('Discovery URL'),
         dataIndex: 'discovery_url',
@@ -239,6 +250,17 @@ export class BaseDetail extends Base {
             '-'
           ),
       },
+      ...['labels_added', 'labels_overridden', 'labels_skipped'].map(
+        (key, index) => ({
+          label: [
+            t('Added Labels'),
+            t('Overridden Labels'),
+            t('Skipped Labels'),
+          ][index],
+          dataIndex: key,
+          render: (value) => (isEmpty(value) ? '-' : JSON.stringify(value)),
+        })
+      ),
     ];
 
     return {

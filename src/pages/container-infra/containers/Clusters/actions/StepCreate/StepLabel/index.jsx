@@ -26,21 +26,23 @@ export class StepLabel extends Base {
   }
 
   get defaultValue() {
-    const values = {};
-    const { context: { clusterTemplate = {} } = {} } = this.props;
-    const { selectedRows = [] } = clusterTemplate;
-    const { labels = {} } = selectedRows[0] || {};
-    values.additionalLabels = Object.keys(labels || {}).map((key) => ({
-      value: {
-        key,
-        value: labels[key],
-      },
-    }));
-    return values;
+    return { labelMode: 'merge', additionalLabels: [] };
   }
 
   get formItems() {
     return [
+      {
+        name: 'labelMode',
+        label: t('Template Labels'),
+        type: 'select',
+        options: [
+          { label: t('Merge with template labels'), value: 'merge' },
+          { label: t('Replace Magnum labels'), value: 'replace' },
+        ],
+        tip: t(
+          'CAPI Helm also reads settings from the template. Set a value explicitly to override it.'
+        ),
+      },
       {
         name: 'additionalLabels',
         label: t('Additional Labels'),

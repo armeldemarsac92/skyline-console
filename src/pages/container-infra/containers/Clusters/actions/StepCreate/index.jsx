@@ -18,6 +18,7 @@ import globalProjectStore from 'stores/keystone/project';
 import globalFlavorStore from 'stores/nova/flavor';
 import { getGiBValue } from 'utils';
 import { message as $message } from 'antd';
+import { buildClusterBody } from 'resources/magnum/lifecycle';
 import StepInfo from './StepInfo';
 import StepNodeSpec from './StepNodeSpec';
 import StepNetworks from './StepNetworks';
@@ -315,52 +316,7 @@ export class StepCreate extends StepAction {
     return '';
   }
 
-  onSubmit = (values) => {
-    const {
-      additionalLabels,
-      clusterTemplate,
-      keypair,
-      auto_healing_enabled,
-      auto_scaling_enabled,
-      newNetwork,
-      fixedNetwork,
-      fixedSubnet,
-      flavor,
-      masterFlavor,
-      ...rest
-    } = values;
-    const requestLabels = {};
-
-    if (additionalLabels) {
-      additionalLabels.forEach((item) => {
-        const labelKey = item.value.key;
-        const labelValue = item.value.value;
-        requestLabels[labelKey] = labelValue;
-      });
-    }
-
-    const data = {
-      ...rest,
-      name: values.name,
-      labels: {
-        ...requestLabels,
-        auto_healing_enabled: `${!!auto_healing_enabled}`,
-        auto_scaling_enabled: `${!!auto_scaling_enabled}`,
-      },
-      cluster_template_id: clusterTemplate.selectedRowKeys[0],
-      keypair: (keypair && keypair.selectedRowKeys[0]) || null,
-      master_flavor_id:
-        masterFlavor?.selectedRows?.[0]?.name ||
-        masterFlavor?.selectedRowKeys?.[0] ||
-        null,
-      flavor_id:
-        flavor?.selectedRows?.[0]?.name || flavor?.selectedRowKeys?.[0] || null,
-      fixed_network: (!newNetwork && fixedNetwork.selectedRowKeys[0]) || null,
-      fixed_subnet: (!newNetwork && fixedSubnet.selectedRowKeys[0]) || null,
-    };
-
-    return this.store.create(data);
-  };
+  onSubmit = (values) => this.store.create(buildClusterBody(values));
 }
 
 export default inject('rootStore')(observer(StepCreate));
