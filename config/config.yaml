@@ -5,8 +5,12 @@ server: http://localhost
 theme: default
 
 globalVariables:
-  # Set verified legacy template mappings per Keystone region in local_config.yaml.
-  magnumDriverMappings: {}
+  magnumDriverMappings:
+    RegionOne:
+      - server_type: vm
+        cluster_distro: ubuntu
+        coe: kubernetes
+        driver: k8s_capi_helm_v1
   defaultLanguage: en
   supportLanguages: # use value in i18n.js
     - en

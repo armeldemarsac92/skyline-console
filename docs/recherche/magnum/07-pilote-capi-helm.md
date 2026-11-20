@@ -26,21 +26,21 @@ L’étude porte sur le code. La révision installée, le chart et ses valeurs e
 
 Magnum résout d’abord le pilote explicite du modèle, puis son triplet `server_type / cluster_distro / coe` dans le registre des pilotes chargés par le conducteur. Deux régions peuvent charger des pilotes différents pour le même triplet. Skyline utilise le nom de région du profil connecté et une correspondance fournie par l’opérateur. La console ne modifie aucun modèle pour résoudre son pilote. [Code de Magnum](https://github.com/openstack/magnum/blob/68befbf84e8ec50e57dee682cea9398bba606904/magnum/drivers/common/driver.py#L90-L157)
 
-Pour activer cette résolution, vérifier dans le processus ou l’environnement Python du conducteur, avec sa configuration chargée, la classe retournée par `Driver.get_driver('vm', 'ubuntu', 'kubernetes')` du module `magnum.drivers.common.driver`. L’entrée `k8s_capi_helm_v1` correspond à `magnum_capi_helm.driver.Driver`. Renseigner ensuite le **nom Keystone exact** de cette région dans `config/local_config.yaml` avant de compiler la console. Dans cet exemple, `RegionExemple` désigne une région fictive. [Entrée du pilote 1.4.0](https://github.com/openstack/magnum-capi-helm/blob/a8b82c2480a286a10b60ecc1d94c6cd9f1d01823/setup.cfg#L31)
+Dans `RegionOne`, le registre du conducteur associe le triplet `vm / ubuntu / kubernetes` à `k8s_capi_helm_v1`. Le fork embarque cette correspondance dans `config/config.yaml`. Pour ajouter une région, vérifier dans son conducteur le résultat de `Driver.get_driver('vm', 'ubuntu', 'kubernetes')` du module `magnum.drivers.common.driver`, puis renseigner son nom Keystone exact. [Entrée du pilote 1.4.0](https://github.com/openstack/magnum-capi-helm/blob/a8b82c2480a286a10b60ecc1d94c6cd9f1d01823/setup.cfg#L31)
 
 ```yaml
 globalVariables:
   magnumDriverMappings:
-    RegionExemple:
+    RegionOne:
       - server_type: vm
         cluster_distro: ubuntu
         coe: kubernetes
         driver: k8s_capi_helm_v1
 ```
 
-Skyline intègre cette configuration au bundle pendant sa construction. Le workflow du fork utilise un checkout vierge. Pour produire une image à partir de ce workflow, la même section peut être renseignée dans le fichier suivi `config/config.yaml` du fork après vérification du registre régional.
+Le workflow de publication intègre le fichier suivi `config/config.yaml` au bundle. Une compilation locale peut utiliser `config/local_config.yaml`.
 
-La configuration distribuée est vide par défaut. Un triplet absent, incomplet ou associé à deux pilotes différents reste indéterminé. Le modèle explicite garde la priorité. Le numéro du chart et les labels d’un locataire ne participent pas à cette décision.
+Un triplet absent, incomplet ou associé à deux pilotes différents reste indéterminé. Le pilote explicite du modèle garde la priorité.
 
 ### Minimum des workers avec autoscaling
 
