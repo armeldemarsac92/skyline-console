@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import React from 'react';
+import { observable, runInAction } from 'mobx';
 import { inject, observer } from 'mobx-react';
 import Base from 'containers/TabDetail';
 import { clusterStatus, healthStatus } from 'resources/magnum/cluster';
-import globalClustersStore from 'src/stores/magnum/clusters';
+import { ClustersStore } from 'stores/magnum/clusters';
 import BaseDetail from './BaseDetail';
 import NodeGroups from './NodeGroups';
 import Access from './Access';
@@ -23,8 +25,48 @@ import actionConfigs from '../actions';
 
 export class ClustersDetail extends Base {
   init() {
-    this.store = globalClustersStore;
+    this.store = observable({ detail: {}, isLoading: true });
   }
+
+  componentWillUnmount() {
+    this.request = null;
+  }
+
+  fetchData = async (params, silent) => {
+    if (this.request === null) return;
+
+    // Fetch and enrich in isolation until the current request can publish.
+    const request = new ClustersStore();
+    const { id } = this;
+    this.request = request;
+    if (this.state.notFound) {
+      this.setState({ notFound: false });
+    }
+    if (!silent) {
+      runInAction(() => {
+        this.store.isLoading = true;
+      });
+    }
+
+    let detail;
+    try {
+      detail = await request.fetchDetail({
+        ...this.params,
+        ...params,
+        id,
+        all_projects: this.isAdminPage,
+        silent,
+      });
+    } catch (error) {
+      if (this.request === request) this.catch(error);
+    }
+    if (this.request !== request) return;
+
+    runInAction(() => {
+      this.store.detail = id && detail?.uuid === id ? { ...detail, id } : {};
+      this.store.isLoading = false;
+    });
+  };
 
   get name() {
     return t('Cluster Detail');
@@ -91,4 +133,17 @@ export class ClustersDetail extends Base {
   }
 }
 
-export default inject('rootStore')(observer(ClustersDetail));
+const ObservedClustersDetail = observer(ClustersDetail);
+
+export default inject('rootStore')(
+  observer(function ScopedClustersDetail(props) {
+    const { rootStore, location, match } = props;
+    const key = JSON.stringify([
+      rootStore.selectedRegion,
+      rootStore.projectId,
+      location.pathname,
+      match.params.id,
+    ]);
+    return <ObservedClustersDetail key={key} {...props} />;
+  })
+);
