@@ -17,6 +17,8 @@ import Base from 'containers/TabDetail';
 import { clusterStatus, healthStatus } from 'resources/magnum/cluster';
 import globalClustersStore from 'src/stores/magnum/clusters';
 import BaseDetail from './BaseDetail';
+import NodeGroups from './NodeGroups';
+import Access from './Access';
 import actionConfigs from '../actions';
 
 export class ClustersDetail extends Base {
@@ -33,7 +35,7 @@ export class ClustersDetail extends Base {
   }
 
   get policy() {
-    return 'cluster:detail';
+    return 'cluster:get';
   }
 
   get actionConfigs() {
@@ -83,6 +85,8 @@ export class ClustersDetail extends Base {
         key: 'general_info',
         component: BaseDetail,
       },
+      { title: t('Node Groups'), key: 'nodegroups', component: NodeGroups },
+      { title: t('Cluster Access'), key: 'access', component: Access },
     ];
   }
 }
