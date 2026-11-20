@@ -15,8 +15,9 @@
 import Base from 'stores/base';
 import client from 'client';
 import { action } from 'mobx';
-import { isBoolean } from 'lodash';
+import { isBoolean, isEqual } from 'lodash';
 import { allSettled } from 'utils';
+import { listAll } from 'client/magnum';
 
 export class ClusterTemplatesStore extends Base {
   get client() {
@@ -39,9 +40,19 @@ export class ClusterTemplatesStore extends Base {
     return true;
   }
 
+  requestListAll(params) {
+    return listAll(
+      (query) => this.listFetchByClient(query),
+      'clustertemplates',
+      params
+    );
+  }
+
   @action
   async create(newbody) {
-    return this.submitting(this.client.create(newbody));
+    return this.submitting(
+      this.client.create({ ...newbody, coe: 'kubernetes' })
+    );
   }
 
   @action
@@ -50,26 +61,38 @@ export class ClusterTemplatesStore extends Base {
   }
 
   @action
-  async update({ id }, body) {
-    const newBody = Object.keys(body)
-      .filter(
-        (key) =>
-          !(
-            ['network_driver', 'external_network_id'].includes(key) &&
-            !body[key]
-          )
+  async update({ id, original }, body) {
+    const previous = original || (await this.client.show(id));
+    const patch = [];
+    Object.entries(body).forEach(([key, value]) => {
+      const empty = value === null || value === '';
+      const old = previous[key];
+      if (
+        value === undefined ||
+        isEqual(value, old) ||
+        (empty && !old) ||
+        (empty && ['network_driver', 'external_network_id'].includes(key))
       )
-      .map((key) => ({
-        path: `/${key}`,
-        value:
+        return;
+      if (empty) {
+        patch.push({ op: 'remove', path: `/${key}` });
+      } else {
+        const encoded =
           key === 'labels'
-            ? JSON.stringify(body[key] || {})
-            : isBoolean(body[key])
-            ? `${body[key]}`
-            : body[key],
-        op: [null, undefined, ''].includes(body[key]) ? 'remove' : 'replace',
-      }));
-    return this.submitting(this.client.patch(id, newBody));
+            ? JSON.stringify(value)
+            : isBoolean(value)
+            ? String(value)
+            : value;
+        patch.push({
+          op: old === undefined ? 'add' : 'replace',
+          path: `/${key}`,
+          value: encoded,
+        });
+      }
+    });
+    return patch.length
+      ? this.submitting(this.client.patch(id, patch))
+      : previous;
   }
 
   get mapper() {

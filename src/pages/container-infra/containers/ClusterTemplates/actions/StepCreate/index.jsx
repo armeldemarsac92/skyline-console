@@ -14,6 +14,7 @@ import { inject, observer } from 'mobx-react';
 import { StepAction } from 'src/containers/Action';
 import globalClusterTemplateStore from 'src/stores/magnum/clusterTemplates';
 import { toJS } from 'mobx';
+import { hasMagnumPolicy } from 'resources/magnum/capabilities';
 import StepInfo from './StepInfo';
 import StepNodeSpec from './StepNodeSpec';
 import StepNetwork from './StepNetwork';
@@ -125,8 +126,16 @@ export class StepCreate extends StepAction {
       image_id: (images && images.selectedRowKeys[0]) || null,
       keypair_id: (keypair && keypair.selectedRowKeys[0]) || null,
     };
+    if (!hasMagnumPolicy('clustertemplate:publish')) {
+      delete body.public;
+      delete body.hidden;
+    }
+    if (!body.driver && !this.isEdit) delete body.driver;
     if (this.isEdit) {
-      return this.store.update({ id: this.params.id }, body);
+      return this.store.update(
+        { id: this.params.id, original: this.state.extra },
+        body
+      );
     }
     return this.store.create(body);
   };

@@ -32,6 +32,9 @@ export class BaseDetail extends Base {
 
   get baseInfoCard() {
     const options = [
+      { label: t('Magnum Driver'), dataIndex: 'driver' },
+      { label: t('Tags'), dataIndex: 'tags' },
+      { label: t('API Server Port'), dataIndex: 'apiserver_port' },
       {
         label: t('Cluster Distro'),
         dataIndex: 'cluster_distro',

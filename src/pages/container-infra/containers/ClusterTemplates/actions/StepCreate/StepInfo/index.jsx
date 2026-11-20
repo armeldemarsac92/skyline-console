@@ -14,6 +14,7 @@
 
 import Base from 'components/Form';
 import { inject, observer } from 'mobx-react';
+import { hasMagnumPolicy } from 'resources/magnum/capabilities';
 
 export class StepInfo extends Base {
   get title() {
@@ -33,7 +34,7 @@ export class StepInfo extends Base {
   }
 
   get defaultValue() {
-    let values = {};
+    let values = { server_type: 'vm' };
 
     if (this.isEdit) {
       const {
@@ -43,6 +44,10 @@ export class StepInfo extends Base {
           hidden,
           registry_enabled,
           tls_disabled,
+          driver,
+          tags,
+          insecure_registry,
+          server_type,
         } = {},
       } = this.props;
       values = {
@@ -52,6 +57,10 @@ export class StepInfo extends Base {
         hidden,
         registry_enabled,
         tls_disabled,
+        driver,
+        tags,
+        insecure_registry,
+        server_type,
       };
     }
     return values;
@@ -67,14 +76,47 @@ export class StepInfo extends Base {
         required: true,
       },
       {
+        name: 'driver',
+        label: t('Magnum Driver'),
+        type: 'select',
+        options: [
+          ...new Set(
+            ['', 'k8s_capi_helm_v1', this.props.extra?.driver].filter(
+              (value) => value !== undefined && value !== null
+            )
+          ),
+        ].map((value) => ({ value, label: value || t('Service default') })),
+      },
+      {
+        name: 'server_type',
+        label: t('Server Type'),
+        type: 'select',
+        options: [
+          ...new Set(['vm', this.props.extra?.server_type].filter(Boolean)),
+        ].map((value) => ({ value, label: value })),
+      },
+      {
+        name: 'tags',
+        label: t('Tags'),
+        type: 'input',
+        placeholder: t('Comma-separated tags'),
+      },
+      {
+        name: 'insecure_registry',
+        label: t('Insecure Registry'),
+        type: 'input',
+      },
+      {
         name: 'public',
         label: t('Public'),
         type: 'check',
+        display: hasMagnumPolicy('clustertemplate:publish'),
       },
       {
         name: 'hidden',
         label: t('Hidden'),
         type: 'check',
+        display: hasMagnumPolicy('clustertemplate:publish'),
       },
       {
         name: 'registry_enabled',

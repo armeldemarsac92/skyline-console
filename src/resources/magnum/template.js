@@ -21,6 +21,7 @@ export const getBaseTemplateColumns = (self) => [
     dataIndex: 'name',
     routeName: self.getRouteName('containerInfraClusterTemplateDetail'),
   },
+  { title: t('Tags'), dataIndex: 'tags', isHideable: true },
   {
     title: t('Project ID/Name'),
     dataIndex: 'project_name',

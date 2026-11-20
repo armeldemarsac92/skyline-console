@@ -87,7 +87,7 @@ export class StepNodeSpec extends Base {
   }
 
   get acceptedImageOs() {
-    return ['ubuntu'];
+    return ['ubuntu', 'flatcar'];
   }
 
   get imageColumns() {
@@ -102,9 +102,7 @@ export class StepNodeSpec extends Base {
   }
 
   get volumeDrivers() {
-    return [
-      { value: 'cinder', label: 'Cinder' },
-    ];
+    return [{ value: 'cinder', label: 'Cinder' }];
   }
 
   get defaultValue() {
