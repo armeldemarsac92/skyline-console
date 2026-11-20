@@ -21,3 +21,29 @@ L’étude du 20 novembre 2026 associe Magnum `stable/2026.2` (Hibiscus) au tag 
 Le chart par défaut 0.10.1 transmet `machineFlavor` dans `spec.flavor` pour les workers et le plan de contrôle. CAPO résout ce champ par nom. Le sélecteur de Skyline envoie donc le nom du flavor Nova à CAPI Helm, même quand la ligne sélectionnée a un UUID distinct. [Workers du chart](https://github.com/azimuth-cloud/capi-helm-charts/blob/856f8fb7372615ac0d3173d9b5d91fe605c9aeac/charts/openstack-cluster/templates/node-group/openstack-machine-template.yaml#L14) · [Plan de contrôle](https://github.com/azimuth-cloud/capi-helm-charts/blob/856f8fb7372615ac0d3173d9b5d91fe605c9aeac/charts/openstack-cluster/templates/control-plane/openstack-machine-template.yaml#L18) · [Résolution Nova dans CAPO](https://github.com/kubernetes-sigs/cluster-api-provider-openstack/blob/v0.10.1/pkg/cloud/services/compute/instance.go#L49)
 
 L’étude porte sur le code. La révision installée, le chart et ses valeurs effectives restent à qualifier sur le cloud. Pour deux pools de flavors distincts, la vérification couvre le groupe visible dans Magnum, le statut terminal et les VM créées avec le flavor attendu.
+
+## Modèles historiques et régions
+
+Magnum résout d’abord le pilote explicite du modèle, puis son triplet `server_type / cluster_distro / coe` dans le registre des pilotes chargés par le conducteur. Deux régions peuvent charger des pilotes différents pour le même triplet. Skyline utilise le nom de région du profil connecté et une correspondance fournie par l’opérateur. La console ne modifie aucun modèle pour résoudre son pilote. [Code de Magnum](https://github.com/openstack/magnum/blob/68befbf84e8ec50e57dee682cea9398bba606904/magnum/drivers/common/driver.py#L90-L157)
+
+Pour activer cette résolution, vérifier dans le processus ou l’environnement Python du conducteur, avec sa configuration chargée, la classe retournée par `Driver.get_driver('vm', 'ubuntu', 'kubernetes')` du module `magnum.drivers.common.driver`. L’entrée `k8s_capi_helm_v1` correspond à `magnum_capi_helm.driver.Driver`. Renseigner ensuite le **nom Keystone exact** de cette région dans `config/local_config.yaml` avant de compiler la console. Dans cet exemple, `RegionExemple` désigne une région fictive. [Entrée du pilote 1.4.0](https://github.com/openstack/magnum-capi-helm/blob/a8b82c2480a286a10b60ecc1d94c6cd9f1d01823/setup.cfg#L31)
+
+```yaml
+globalVariables:
+  magnumDriverMappings:
+    RegionExemple:
+      - server_type: vm
+        cluster_distro: ubuntu
+        coe: kubernetes
+        driver: k8s_capi_helm_v1
+```
+
+Skyline intègre cette configuration au bundle pendant sa construction. Le workflow du fork utilise un checkout vierge. Pour produire une image à partir de ce workflow, la même section peut être renseignée dans le fichier suivi `config/config.yaml` du fork après vérification du registre régional.
+
+La configuration distribuée est vide par défaut. Un triplet absent, incomplet ou associé à deux pilotes différents reste indéterminé. Le modèle explicite garde la priorité. Le numéro du chart et les labels d’un locataire ne participent pas à cette décision.
+
+### Minimum des workers avec autoscaling
+
+Avec les versions publiées pour Hibiscus (Magnum 23.0.0 et CAPI Helm 1.4.0), le pilote exige un minimum effectif d’au moins **1** quand l’autoscaling est activé. Pour le worker par défaut, la borne effective peut provenir des labels du cluster. Un pool supplémentaire utilise ses propres bornes. La microversion 1.10 permet la demande manuelle de zéro worker quand l’autoscaling est désactivé et que les bornes le permettent. [Validation 1.4.0](https://github.com/openstack/magnum-capi-helm/blob/a8b82c2480a286a10b60ecc1d94c6cd9f1d01823/magnum_capi_helm/driver.py#L781-L838)
+
+Une révision ultérieure du pilote permet un minimum autoscalé de zéro avec un chart d’au moins 0.26.0. Les charts `0.29.0+mustelinet.4` et `0.29.0+mustelinet.5` satisfont le critère de version du chart. La descente puis la remontée réelles dépendent aussi du code du conducteur installé et du chart déployé. [Contrôle de version du chart](https://github.com/openstack/magnum-capi-helm/blob/2a5d918ee95cb11c23c5ab9f4a39ceeef3ee1581/magnum_capi_helm/driver.py#L602-L607) · [Validation du minimum après la 1.4.0](https://github.com/openstack/magnum-capi-helm/blob/2a5d918ee95cb11c23c5ab9f4a39ceeef3ee1581/magnum_capi_helm/driver.py#L980-L1001)

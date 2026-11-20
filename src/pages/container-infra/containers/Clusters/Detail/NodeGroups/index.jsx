@@ -17,7 +17,9 @@ import { clusterStatus } from 'resources/magnum/cluster';
 import { hasMagnumPolicy, isCapiHelm } from 'resources/magnum/capabilities';
 import {
   autoscaling,
+  autoscalingRange,
   canChangeCluster,
+  canChangeGroup,
   canListGroups,
   canPatchCluster,
   canPatchResize,
@@ -30,6 +32,7 @@ import {
   magnumError,
   magnumStatus,
   showGroup,
+  manualResizeRestriction,
   versionOptions,
 } from 'resources/magnum/nodegroups';
 import Resize from '../../actions/Resize';
@@ -42,7 +45,8 @@ const valueText = (value) => {
   return typeof value === 'object' ? JSON.stringify(value, null, 2) : value;
 };
 
-function GroupDetail({ group, close, version }) {
+function GroupDetail({ cluster, group, close, version }) {
+  const range = autoscalingRange(cluster, group);
   const fields = [
     [t('Name'), 'name'],
     [t('UUID'), 'uuid'],
@@ -79,6 +83,11 @@ function GroupDetail({ group, close, version }) {
             {valueText(group[key])}
           </Descriptions.Item>
         ))}
+        {range !== undefined && (
+          <Descriptions.Item label={t('Autoscaling Bounds')}>
+            {range}
+          </Descriptions.Item>
+        )}
         <Descriptions.Item label={t('Default')}>
           {group.is_default ? t('Yes') : t('No')}
         </Descriptions.Item>
@@ -163,6 +172,7 @@ export class NodeGroups extends Component {
 
   get columns() {
     const { sortDir } = this.state;
+    const { detail } = this.props;
     return [
       {
         title: t('Name'),
@@ -189,6 +199,16 @@ export class NodeGroups extends Component {
         dataIndex: 'max_node_count',
         render: valueText,
       },
+      ...(isCapiHelm(detail) && autoscaling(detail) === true
+        ? [
+            {
+              title: t('Autoscaling Bounds'),
+              key: 'autoscaling',
+              render: (_, group) =>
+                (group.detailed && autoscalingRange(detail, group)) || '-',
+            },
+          ]
+        : []),
       {
         title: t('Status'),
         dataIndex: 'status',
@@ -212,7 +232,7 @@ export class NodeGroups extends Component {
     if (!id) return;
     clearTimeout(this.timer);
     this.loadId += 1;
-    const loadId = this.loadId;
+    const { loadId } = this;
     const { role, sortDir } = this.state;
     if (!silent) {
       this.setState({
@@ -325,10 +345,26 @@ export class NodeGroups extends Component {
   };
 
   saveGroup = async (values) => {
-    if (!this.canMutate) throw new Error(t('Unable to save the node group.'));
+    const { detail } = this.props;
     const { modal, version } = this.state;
+    const { group } = modal;
+    const creating = modal.kind === 'create';
+    const current = this.currentGroup(group);
+    if (
+      !this.canMutate ||
+      !isCapiHelm(detail) ||
+      this.busy ||
+      (creating
+        ? !detail.api_address || !hasMagnumPolicy('nodegroup:create')
+        : !current?.detailed ||
+          current.role === 'master' ||
+          !canChangeGroup(current) ||
+          !hasMagnumPolicy('nodegroup:update'))
+    ) {
+      throw new Error(t('Unable to save the node group.'));
+    }
     const groups = client.magnum.clusters.nodegroups;
-    if (modal.kind === 'create') {
+    if (creating) {
       const body = {
         name: values.name.trim(),
         role: values.role.trim(),
@@ -347,10 +383,9 @@ export class NodeGroups extends Component {
       this.accepted(
         'create',
         { ...body, ...result },
-        (group) => !!group.status
+        (resultGroup) => !!resultGroup.status
       );
     } else {
-      const { group } = modal;
       const changed = bounds.filter(
         (key) => (values[key] ?? null) !== (group[key] ?? null)
       );
@@ -359,7 +394,7 @@ export class NodeGroups extends Component {
         values[key] == null
           ? { op: 'remove', path: `/${key}` }
           : {
-              op: group[key] === undefined ? 'add' : 'replace',
+              op: current[key] === undefined ? 'add' : 'replace',
               path: `/${key}`,
               value: values[key],
             }
@@ -371,7 +406,7 @@ export class NodeGroups extends Component {
         null,
         versionOptions(version)
       );
-      this.accepted('update', group, (result) =>
+      this.accepted('update', current, (result) =>
         changed.every((key) => {
           const fallback = key === 'min_node_count' ? 0 : null;
           return (result[key] ?? fallback) === (values[key] ?? fallback);
@@ -381,19 +416,29 @@ export class NodeGroups extends Component {
   };
 
   deleteGroup = async () => {
+    const { detail } = this.props;
     const { modal, version, deleting } = this.state;
-    if (deleting || !this.canMutate || !this.canDeleteGroup(modal.group))
+    const group = this.currentGroup(modal.group);
+    if (
+      deleting ||
+      !this.canMutate ||
+      !isCapiHelm(detail) ||
+      !hasMagnumPolicy('nodegroup:delete') ||
+      !group ||
+      !this.canDeleteGroup(group)
+    ) {
       return;
+    }
     this.setState({ deleting: true, deleteError: undefined });
     try {
       await client.magnum.clusters.nodegroups.delete(
         this.clusterId,
-        modal.group.uuid,
+        group.uuid,
         null,
         null,
         versionOptions(version)
       );
-      this.accepted('delete', modal.group);
+      this.accepted('delete', group);
       this.setState({ modal: undefined, deleting: false });
     } catch (reason) {
       this.setState({
@@ -408,11 +453,20 @@ export class NodeGroups extends Component {
 
   closeModal = () => this.setState({ modal: undefined });
 
+  currentGroup(group) {
+    const { groups } = this.state;
+    return groups.find(({ uuid }) => uuid === group?.uuid);
+  }
+
   canDeleteGroup(group) {
+    const { detail } = this.props;
     return (
       !group.is_default &&
-      !this.pending.has(group.uuid) &&
-      !['DELETE_IN_PROGRESS', 'DELETE_COMPLETE'].includes(group.status)
+      !this.pending.size &&
+      !isInProgress(detail) &&
+      detail.status !== 'DELETE_COMPLETE' &&
+      !isInProgress(group) &&
+      group.status !== 'DELETE_COMPLETE'
     );
   }
 
@@ -467,7 +521,9 @@ export class NodeGroups extends Component {
     const canPatch =
       !canResize && isDefaultWorker(group) && canPatchResize(this.adminContext);
     const capi = isCapiHelm(detail);
-    const blocked = this.busy || !canChangeCluster(group);
+    const blocked = this.busy || !canChangeGroup(group);
+    const resizeRestriction =
+      group.detailed && manualResizeRestriction(detail, group);
     if (group.detailError) return <span role="alert">{group.detailError}</span>;
     return (
       <Space wrap>
@@ -485,7 +541,11 @@ export class NodeGroups extends Component {
               item={detail}
               action={Resize}
               actionType="modal"
-              isAllowed={!blocked && (!canPatch || canPatchCluster(detail))}
+              isAllowed={
+                !blocked &&
+                !resizeRestriction &&
+                (!canPatch || canPatchCluster(detail))
+              }
               needHide={false}
               containerProps={{
                 nodeGroup: group,
@@ -529,14 +589,15 @@ export class NodeGroups extends Component {
   };
 
   renderModal() {
-    const { modal, groups, version, deleting, deleteError } = this.state;
+    const { modal, version, deleting, deleteError } = this.state;
     if (!modal) return null;
     const { detail } = this.props;
     const { kind, group } = modal;
     if (kind === 'detail') {
-      const current = groups.find(({ uuid }) => uuid === group.uuid) || group;
+      const current = this.currentGroup(group) || group;
       return (
         <GroupDetail
+          cluster={detail}
           group={current}
           close={this.closeModal}
           version={version}

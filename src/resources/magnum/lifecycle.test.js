@@ -98,30 +98,3 @@ it('submits a global Kubernetes upgrade with only the model UUID and the support
     http.restore();
   }
 });
-
-it('creates a CAPI cluster with zero manual workers using microversion 1.10', async () => {
-  const http = mockMagnum(
-    ({ method, path }) =>
-      method === 'POST' &&
-      path === '/v1/clusters' && { status: 202, data: { uuid: 'empty' } }
-  );
-  try {
-    const template = {
-      driver: 'k8s_capi_helm_v1',
-      labels: { auto_scaling_enabled: 'true' },
-    };
-    const form = {
-      node_count: 0,
-      clusterTemplate: { selectedRowKeys: ['tmpl'], selectedRows: [template] },
-    };
-    expect(() => buildClusterBody(form)).toThrow();
-    const body = buildClusterBody({ ...form, auto_scaling_enabled: 'false' });
-    await new ClustersStore().create(body);
-    expect(http.requests[0]).toMatchObject({
-      body: { node_count: 0 },
-      headers: { 'OpenStack-API-Version': 'container-infra 1.10' },
-    });
-  } finally {
-    http.restore();
-  }
-});

@@ -16,20 +16,27 @@ import { inject, observer } from 'mobx-react';
 import { toJS } from 'mobx';
 import Base from 'components/Form';
 import globalKeypairStore from 'stores/nova/keypair';
-import { FlavorStore } from 'src/stores/nova/flavor';
-import { ClusterTemplatesStore } from 'stores/magnum/clusterTemplates';
+import globalFlavorStore from 'stores/nova/flavor';
 import { defaultTip } from 'resources/magnum/cluster';
 import { getKeyPairHeader } from 'resources/nova/keypair';
 import { getBaseSimpleFlavorColumns } from 'resources/magnum/template';
+import { findFlavor } from 'resources/magnum/flavor';
+import { masterCountError, workerCountError } from 'resources/magnum/lifecycle';
 import { allSettled } from 'utils';
 import client from 'client';
+
+function flavorSelection(flavors, ref) {
+  const flavor = findFlavor(flavors, ref);
+  return {
+    selectedRowKeys: flavor ? [flavor.id] : [],
+    selectedRows: flavor ? [flavor] : [],
+  };
+}
 
 export class StepNodeSpec extends Base {
   init() {
     this.keyPairStore = globalKeypairStore;
-    this.flavorStore = new FlavorStore();
-    this.masterFlavorStore = new FlavorStore();
-    this.templateStore = new ClusterTemplatesStore();
+    this.flavorStore = globalFlavorStore;
     this.getAllInitFunctions();
   }
 
@@ -46,14 +53,17 @@ export class StepNodeSpec extends Base {
   async getAllInitFunctions() {
     await allSettled([
       this.getKeypairs(),
-      this.getFlavors(),
-      this.getMasterFlavors(),
-      this.getTemplateDetail(),
+      this.flavorStore.fetchList(),
       client.magnum
         .supportsVersion('1.10')
+        .catch(() => false)
         .then((zeroSupported) => this.setState({ zeroSupported })),
     ]);
-    this.updateDefaultValue();
+    const { current: form } = this.formRef;
+    if (!form) return;
+    const defaults = this.defaultValue;
+    form.setFieldsValue(defaults);
+    this.updateContext(defaults);
   }
 
   getKeypairs() {
@@ -64,54 +74,34 @@ export class StepNodeSpec extends Base {
     return this.keyPairStore.list.data || [];
   }
 
-  getFlavors() {
-    return this.flavorStore.fetchList();
-  }
-
-  getMasterFlavors() {
-    return this.masterFlavorStore.fetchList();
-  }
-
   get flavors() {
     return toJS(this.flavorStore.list.data) || [];
   }
 
-  get masterFlavors() {
-    return toJS(this.masterFlavorStore.list.data) || [];
-  }
-
-  getTemplateDetail() {
-    const { context: { clusterTemplate = {} } = {} } = this.props;
-    const { selectedRowKeys = [] } = clusterTemplate;
-    const templateId = selectedRowKeys[0];
-    if (templateId) {
-      return this.templateStore.fetchDetail({ id: templateId });
-    }
-  }
-
-  get templateDetail() {
-    return toJS(this.templateStore.detail) || {};
+  get template() {
+    return this.props.context?.clusterTemplate?.selectedRows?.[0] || {};
   }
 
   get defaultValue() {
     const {
-      context: { keypair, masterFlavor, flavor, master_count, node_count } = {},
+      context: {
+        keypair,
+        masterFlavor,
+        flavor,
+        master_count,
+        node_count,
+        auto_scaling_enabled = 'inherit',
+      } = {},
     } = this.props;
-    const { master_flavor_id, flavor_id, keypair_id } = this.templateDetail;
+    const { master_flavor_id, flavor_id, keypair_id } = this.template;
 
     return {
-      master_count: master_count || 1,
+      master_count: master_count ?? 1,
       node_count: node_count ?? 1,
-      masterFlavor: masterFlavor || {
-        selectedRowKeys: master_flavor_id ? [master_flavor_id] : [],
-        selectedRows: this.masterFlavors.filter(
-          (it) => it.id === master_flavor_id
-        ),
-      },
-      flavor: flavor || {
-        selectedRowKeys: flavor_id ? [flavor_id] : [],
-        selectedRows: this.flavors.filter((it) => it.id === flavor_id),
-      },
+      auto_scaling_enabled,
+      masterFlavor:
+        masterFlavor || flavorSelection(this.flavors, master_flavor_id),
+      flavor: flavor || flavorSelection(this.flavors, flavor_id),
       keypair: keypair || {
         selectedRowKeys: keypair_id ? [keypair_id] : [],
         selectedRows: this.keypairs.filter((it) => it.id === keypair_id),
@@ -119,28 +109,35 @@ export class StepNodeSpec extends Base {
     };
   }
 
+  get formDefaultValue() {
+    // Template changes clear previous selections in context. Seed the Ant
+    // form with the new defaults even when those context keys are undefined.
+    return { ...this.props.context, ...this.defaultValue };
+  }
+
+  validateWorkers = (_, count) => {
+    const error = workerCountError(
+      { ...this.props.context, node_count: count },
+      this.state.zeroSupported
+    );
+    return error ? Promise.reject(new Error(error)) : Promise.resolve();
+  };
+
+  validateMasters = (_, count) => {
+    const error = masterCountError(count, this.template);
+    return error ? Promise.reject(new Error(error)) : Promise.resolve();
+  };
+
   get formItems() {
     const {
-      context: { clusterTemplate = {}, keypair, masterFlavor, flavor } = {},
-    } = this.props;
-    const { selectedRows = [] } = clusterTemplate;
-    const { master_flavor_id, flavor_id, keypair_id } = selectedRows[0] || {};
-    const { initKeyPair = keypair } = this.state;
-    const templateInitKeypair = {
-      selectedRowKeys: keypair_id ? [keypair_id] : [],
-      selectedRows: this.keypairs.filter((it) => it.id === keypair_id),
-    };
-
-    const initFlavor = flavor || {
-      selectedRowKeys: flavor_id ? [flavor_id] : [],
-      selectedRows: this.flavors.filter((it) => it.id === flavor_id),
-    };
-    const initMasterFlavor = masterFlavor || {
-      selectedRowKeys: master_flavor_id ? [master_flavor_id] : [],
-      selectedRows: this.masterFlavors.filter(
-        (it) => it.id === master_flavor_id
-      ),
-    };
+      keypair: initKeyPair,
+      masterFlavor: initMasterFlavor,
+      flavor: initFlavor,
+    } = this.defaultValue;
+    const zeroError = workerCountError(
+      { ...this.props.context, node_count: 0 },
+      this.state.zeroSupported
+    );
 
     return [
       {
@@ -148,7 +145,7 @@ export class StepNodeSpec extends Base {
         label: t('Keypair'),
         type: 'select-table',
         data: this.keypairs,
-        initValue: initKeyPair || templateInitKeypair,
+        initValue: initKeyPair,
         isLoading: this.keyPairStore.list.isLoading,
         header: getKeyPairHeader(this),
         tip: t(
@@ -178,6 +175,7 @@ export class StepNodeSpec extends Base {
         min: 1,
         step: 2,
         required: true,
+        validator: this.validateMasters,
         onChange: (value) => {
           this.updateContext({
             master_count: value,
@@ -190,10 +188,10 @@ export class StepNodeSpec extends Base {
         type: 'select-table',
         required: true,
         tip: defaultTip,
-        data: this.masterFlavors,
+        data: this.flavors,
         initValue: initMasterFlavor,
         columns: getBaseSimpleFlavorColumns(this),
-        isLoading: this.masterFlavorStore.list.isLoading,
+        isLoading: this.flavorStore.list.isLoading,
         filterParams: [
           {
             label: t('Name'),
@@ -210,11 +208,25 @@ export class StepNodeSpec extends Base {
         type: 'divider',
       },
       {
+        name: 'auto_scaling_enabled',
+        label: t('Auto Scaling'),
+        type: 'select',
+        options: [
+          { label: t('Inherit from template'), value: 'inherit' },
+          { label: t('Enabled'), value: 'true' },
+          { label: t('Disabled'), value: 'false' },
+        ],
+        onChange: (value) =>
+          this.updateContext({ auto_scaling_enabled: value }),
+      },
+      {
         name: 'node_count',
         label: t('Number of Nodes'),
         type: 'input-int',
-        min: this.state.zeroSupported ? 0 : 1,
+        min: zeroError ? 1 : 0,
         required: true,
+        validator: this.validateWorkers,
+        tip: zeroError,
         onChange: (value) => {
           this.updateContext({
             node_count: value,

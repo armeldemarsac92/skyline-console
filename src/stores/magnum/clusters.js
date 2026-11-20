@@ -17,7 +17,7 @@ import client from 'client';
 import { action } from 'mobx';
 import { allSettled } from 'utils';
 import { listAll } from 'client/magnum';
-import { hasMagnumPolicy, isCapiHelm } from 'resources/magnum/capabilities';
+import { hasMagnumPolicy, isHeatDriver } from 'resources/magnum/capabilities';
 import { resolveCapiFlavors } from 'resources/magnum/lifecycle';
 
 export class ClustersStore extends Base {
@@ -128,7 +128,7 @@ export class ClustersStore extends Base {
       client.nova.keypairs.list(),
       fixedNetworkId ? this.networkClient.show(fixedNetworkId) : {},
       fixedSubnetId ? this.subnetClient.show(fixedSubnetId) : {},
-      item.stack_id && !isCapiHelm(template)
+      item.stack_id && isHeatDriver(template)
         ? this.stackClient.list({ id: item.stack_id })
         : {},
       resolveCapiFlavors(item, template, client.nova),

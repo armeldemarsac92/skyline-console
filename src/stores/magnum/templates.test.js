@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { templateFlavor } from 'resources/magnum/lifecycle';
+import { templateFlavor } from 'resources/magnum/template';
 import { ClusterTemplatesStore } from './clusterTemplates';
 import { mockMagnum } from '../../../test/unit/magnum';
 
@@ -14,9 +14,9 @@ it('sends a Nova flavor name to CAPI and preserves the stored flavor on an unrel
     selectedRowKeys: ['flavor-id'],
     selectedRows: [{ id: 'flavor-id', name: 'm1.compute' }],
   };
-  expect(templateFlavor(selection, 'k8s_capi_helm_v1')).toBe('m1.compute');
-  expect(templateFlavor(selection, '', 'flavor-id')).toBe('flavor-id');
-  expect(templateFlavor(selection, 'other_driver')).toBe('flavor-id');
+  expect(templateFlavor(selection, true)).toBe('m1.compute');
+  expect(templateFlavor(selection, true, 'flavor-id')).toBe('flavor-id');
+  expect(templateFlavor(selection, false)).toBe('flavor-id');
 });
 
 it('creates a Kubernetes template and updates a referenced template with a single tags patch', async () => {

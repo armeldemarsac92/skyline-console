@@ -48,14 +48,13 @@ export class StepNodeSpec extends Base {
     return !!this.props.extra;
   }
 
-  async getAllInitFunctions() {
-    await allSettled([
+  getAllInitFunctions() {
+    return allSettled([
       this.getImageList(),
       this.getKeypairs(),
       this.getFlavors(),
       this.getMasterFlavors(),
     ]);
-    this.updateDefaultValue();
   }
 
   getImageList() {
@@ -114,7 +113,9 @@ export class StepNodeSpec extends Base {
           image_id,
           keypair_id,
           flavor_id,
+          flavor,
           master_flavor_id,
+          masterFlavor,
           volume_driver,
           docker_storage_driver,
           docker_volume_size,
@@ -126,21 +127,15 @@ export class StepNodeSpec extends Base {
         docker_volume_size,
       };
       if (flavor_id) {
-        const row = this.flavors.find(
-          (it) => it.id === flavor_id || it.name === flavor_id
-        );
         values.flavor = {
-          selectedRowKeys: [row?.id || flavor_id],
-          selectedRows: row ? [row] : [],
+          selectedRowKeys: [flavor?.id || flavor_id],
+          selectedRows: flavor ? [flavor] : [],
         };
       }
       if (master_flavor_id) {
-        const row = this.masterFlavors.find(
-          (it) => it.id === master_flavor_id || it.name === master_flavor_id
-        );
         values.masterFlavor = {
-          selectedRowKeys: [row?.id || master_flavor_id],
-          selectedRows: row ? [row] : [],
+          selectedRowKeys: [masterFlavor?.id || master_flavor_id],
+          selectedRows: masterFlavor ? [masterFlavor] : [],
         };
       }
       if (image_id) {

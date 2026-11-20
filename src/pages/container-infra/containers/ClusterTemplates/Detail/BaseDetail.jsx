@@ -15,6 +15,7 @@ import Base from 'containers/BaseDetail';
 import { inject, observer } from 'mobx-react';
 import { isEmpty } from 'lodash';
 
+import { effectiveDriver } from 'resources/magnum/capabilities';
 import { renderMagnumFlavor } from 'resources/magnum/template';
 
 export class BaseDetail extends Base {
@@ -34,7 +35,10 @@ export class BaseDetail extends Base {
 
   get baseInfoCard() {
     const options = [
-      { label: t('Magnum Driver'), dataIndex: 'driver' },
+      {
+        label: t('Magnum Driver'),
+        content: effectiveDriver(this.detailData) || '-',
+      },
       { label: t('Tags'), dataIndex: 'tags' },
       { label: t('API Server Port'), dataIndex: 'apiserver_port' },
       {
@@ -237,7 +241,7 @@ export class BaseDetail extends Base {
               {Object.entries(value).map(([key, val]) => {
                 return (
                   <li key={key}>
-                    {key} : {val}
+                    {key} : {String(val)}
                   </li>
                 );
               })}

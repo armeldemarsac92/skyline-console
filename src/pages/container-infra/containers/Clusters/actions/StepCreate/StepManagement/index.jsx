@@ -29,7 +29,6 @@ export class StepManagement extends Base {
     return {
       create_timeout: 60,
       auto_healing_enabled: 'inherit',
-      auto_scaling_enabled: 'inherit',
     };
   }
 
@@ -43,12 +42,6 @@ export class StepManagement extends Base {
       {
         name: 'auto_healing_enabled',
         label: t('Auto Healing'),
-        type: 'select',
-        options,
-      },
-      {
-        name: 'auto_scaling_enabled',
-        label: t('Auto Scaling'),
         type: 'select',
         options,
       },

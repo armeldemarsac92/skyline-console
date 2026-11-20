@@ -18,6 +18,8 @@ import globalProjectStore from 'stores/keystone/project';
 import globalFlavorStore from 'stores/nova/flavor';
 import { getGiBValue } from 'utils';
 import { message as $message } from 'antd';
+import client from 'client';
+import { findFlavor } from 'resources/magnum/flavor';
 import { buildClusterBody } from 'resources/magnum/lifecycle';
 import StepInfo from './StepInfo';
 import StepNodeSpec from './StepNodeSpec';
@@ -223,13 +225,9 @@ export class StepCreate extends StepAction {
     const { data = {} } = this.state;
     const { clusterTemplate: { selectedRows = [] } = {} } = data;
     const { master_flavor_id, flavor_id } = selectedRows[0] || {};
-    const masterTemplateFlavor = this.flavors.find(
-      (it) => it.id === master_flavor_id
-    );
-    const workTemplateFlavor = this.flavors.find((it) => it.id === flavor_id);
     return {
-      masterTemplateFlavor,
-      workTemplateFlavor,
+      masterTemplateFlavor: findFlavor(this.flavors, master_flavor_id),
+      workTemplateFlavor: findFlavor(this.flavors, flavor_id),
     };
   }
 
@@ -316,7 +314,12 @@ export class StepCreate extends StepAction {
     return '';
   }
 
-  onSubmit = async (values) => this.store.create(buildClusterBody(values));
+  onSubmit = async (values) => {
+    const zeroSupported =
+      values.node_count === 0 &&
+      (await client.magnum.supportsVersion('1.10').catch(() => false));
+    return this.store.create(buildClusterBody(values, { zeroSupported }));
+  };
 }
 
 export default inject('rootStore')(observer(StepCreate));

@@ -99,8 +99,12 @@ export class StepInfo extends Base {
         ],
         columns: getBaseTemplateColumns(this),
         onChange: (value) => {
+          const previous = this.props.context?.clusterTemplate;
+          const changed =
+            previous?.selectedRowKeys?.[0] !== value?.selectedRowKeys?.[0];
           this.updateContext({
             clusterTemplate: value,
+            ...(changed && { flavor: undefined, masterFlavor: undefined }),
           });
         },
       },

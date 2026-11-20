@@ -17,6 +17,7 @@ import Base from 'components/Form';
 import { toJS } from 'mobx';
 import { inject, observer } from 'mobx-react';
 import { defaultTip } from 'resources/magnum/cluster';
+import { masterLoadBalancerError } from 'resources/magnum/lifecycle';
 import { NetworkStore } from 'stores/neutron/network';
 import { SubnetStore } from 'src/stores/neutron/subnet';
 import { ClusterTemplatesStore } from 'stores/magnum/clusterTemplates';
@@ -89,10 +90,13 @@ export class StepNetworks extends Base {
   }
 
   get defaultValue() {
-    const { context: { fixedNetwork, fixedSubnet } = {} } = this.props;
+    const { context: { fixedNetwork, fixedSubnet, master_lb_enabled } = {} } =
+      this.props;
     const { fixed_network, fixed_subnet } = this.templateDetail;
 
     return {
+      master_lb_enabled:
+        master_lb_enabled ?? this.templateDetail.master_lb_enabled,
       newNetwork: true,
       fixedNetwork: fixedNetwork || {
         selectedRowKeys: fixed_network ? [fixed_network] : [],
@@ -131,6 +135,13 @@ export class StepNetworks extends Base {
         type: 'check',
         content: t('Enabled Load Balancer for Master Nodes'),
         tip: defaultTip,
+        validator: (_, enabled) => {
+          const error = masterLoadBalancerError(
+            this.props.context?.master_count,
+            enabled ?? this.templateDetail.master_lb_enabled
+          );
+          return error ? Promise.reject(new Error(error)) : Promise.resolve();
+        },
       },
       {
         name: 'newNetwork',

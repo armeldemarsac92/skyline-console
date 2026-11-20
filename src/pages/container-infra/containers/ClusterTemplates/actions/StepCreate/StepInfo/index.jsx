@@ -34,7 +34,7 @@ export class StepInfo extends Base {
   }
 
   get defaultValue() {
-    let values = { server_type: 'vm' };
+    let values = { server_type: 'vm', driver: '' };
 
     if (this.isEdit) {
       const {
@@ -52,12 +52,11 @@ export class StepInfo extends Base {
       } = this.props;
       values = {
         name,
-        coe: 'kubernetes',
         public: publics,
         hidden,
         registry_enabled,
         tls_disabled,
-        driver,
+        driver: driver ?? '',
         tags,
         insecure_registry,
         server_type,

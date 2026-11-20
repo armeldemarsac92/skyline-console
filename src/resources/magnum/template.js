@@ -16,6 +16,14 @@ import { flavorArchitectures, flavorCategoryList } from 'resources/nova/flavor';
 import { formatSize } from 'utils';
 import { isCapiHelm } from './capabilities';
 
+export function templateFlavor(selection, useFlavorNames, ref, previousFlavor) {
+  const id = selection?.selectedRowKeys?.[0];
+  if (!id) return null;
+  const row = selection.selectedRows?.[0];
+  if (ref && id === (previousFlavor?.id || ref)) return ref;
+  return useFlavorNames ? row?.name || id : id;
+}
+
 export function renderMagnumFlavor(view, master = false) {
   const detail = view.detailData;
   const key = master ? 'master_flavor_id' : 'flavor_id';

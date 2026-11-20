@@ -1,27 +1,93 @@
 // SPDX-License-Identifier: Apache-2.0
 import { isCapiHelm } from './capabilities';
+import { resolveMagnumFlavors } from './flavor';
+import { autoscaling, defaultWorkerAutoscalingBounds } from './labels';
 
 export async function resolveCapiFlavors(item, template, nova) {
-  if (!isCapiHelm(template) || (!item.flavor_id && !item.master_flavor_id))
-    return {};
-  const { flavors = [] } = await nova.flavors.list();
-  const find = (ref) =>
-    flavors.find((flavor) => flavor.id === ref || flavor.name === ref);
+  return isCapiHelm(template) ? resolveMagnumFlavors(item, nova) : {};
+}
+
+function clusterLabels(additionalLabels, management) {
+  const entries = additionalLabels
+    .filter(({ value }) => value?.key)
+    .map(({ value }) => [value.key, value.value]);
+  Object.entries(management).forEach(([key, value]) => {
+    if (value === 'true' || value === 'false') entries.push([key, value]);
+  });
+  return Object.fromEntries(entries);
+}
+
+function workerLabelSource(values, labels) {
+  const {
+    clusterTemplate,
+    additionalLabels = [],
+    auto_scaling_enabled,
+  } = values;
   return {
-    flavor: find(item.flavor_id),
-    masterFlavor: find(item.master_flavor_id),
+    template: clusterTemplate?.selectedRows?.[0],
+    labels: labels || clusterLabels(additionalLabels, { auto_scaling_enabled }),
   };
 }
 
-export function templateFlavor(selection, driver, previous) {
-  const id = selection?.selectedRowKeys?.[0];
-  if (!id) return null;
-  const row = selection.selectedRows?.[0];
-  if (previous && (previous === id || previous === row?.name)) return previous;
-  return !driver || driver === 'k8s_capi_helm_v1' ? row?.name || id : id;
+export function workerCountError(values, zeroSupported, labels = undefined) {
+  const { node_count } = values;
+  if (!Number.isInteger(node_count) || node_count < 0) {
+    return t('Enter a whole number of workers greater than or equal to zero.');
+  }
+  if (node_count !== 0) return '';
+
+  const cluster = workerLabelSource(values, labels);
+  if (!isCapiHelm(cluster) || !zeroSupported) {
+    return t('Zero workers require a CAPI Helm template and Magnum API 1.10.');
+  }
+  return autoscaling(cluster) === false
+    ? ''
+    : t(
+        'Disable autoscaling explicitly to create a CAPI cluster with zero workers.'
+      );
 }
 
-export function buildClusterBody(values) {
+export function autoscalingBoundsError(values, labels = undefined) {
+  const { node_count } = values;
+  const cluster = workerLabelSource(values, labels);
+  if (
+    node_count <= 0 ||
+    !isCapiHelm(cluster) ||
+    autoscaling(cluster) !== true
+  ) {
+    return '';
+  }
+  const { min, max } = defaultWorkerAutoscalingBounds(cluster);
+  if (min !== undefined && (min < 1 || min > node_count)) {
+    return t(
+      'The autoscaling minimum must be between 1 and the initial worker count.'
+    );
+  }
+  if (min !== undefined && max !== undefined && max < min) {
+    return t('The autoscaling maximum must be at least the minimum.');
+  }
+  return '';
+}
+
+export function masterCountError(count, template) {
+  if (!Number.isInteger(count) || count < 1) {
+    return t('Enter a positive whole number of master nodes.');
+  }
+  if (isCapiHelm(template) && count % 2 === 0) {
+    return t('CAPI Helm requires an odd number of master nodes.');
+  }
+  return '';
+}
+
+export function masterLoadBalancerError(count, enabled) {
+  return count > 1 && enabled !== true
+    ? t(
+        'Enable the load balancer when creating a cluster with multiple master nodes.'
+      )
+    : '';
+}
+
+export function buildClusterBody(values, { zeroSupported = false } = {}) {
   const {
     additionalLabels = [],
     labelMode = 'merge',
@@ -36,30 +102,29 @@ export function buildClusterBody(values) {
     masterFlavor,
     ...body
   } = values;
-  const labels = {};
-  additionalLabels.forEach(({ value }) => {
-    if (value?.key) labels[value.key] = value.value;
+  const labels = clusterLabels(additionalLabels, {
+    auto_healing_enabled,
+    auto_scaling_enabled,
   });
-  Object.entries({ auto_healing_enabled, auto_scaling_enabled }).forEach(
-    ([key, value]) => {
-      if (value === 'true' || value === 'false') labels[key] = value;
-    }
-  );
   if (Object.keys(labels).length) {
     body.labels = labels;
     body.merge_labels = labelMode === 'merge';
   }
   const template = clusterTemplate?.selectedRows?.[0];
-  if (body.node_count === 0 && template?.driver === 'k8s_capi_helm_v1') {
-    const autoscaling =
-      labels.auto_scaling_enabled ?? template.labels?.auto_scaling_enabled;
-    if (String(autoscaling).toLowerCase() !== 'false') {
-      throw new Error(
-        t(
-          'Disable autoscaling explicitly to create a CAPI cluster with zero workers.'
-        )
+  if (body.node_count !== undefined) {
+    const error =
+      workerCountError(values, zeroSupported, labels) ||
+      autoscalingBoundsError(values, labels);
+    if (error) throw new Error(error);
+  }
+  if (body.master_count !== undefined || body.node_count === 0) {
+    const error =
+      masterCountError(body.master_count, template) ||
+      masterLoadBalancerError(
+        body.master_count,
+        body.master_lb_enabled ?? template?.master_lb_enabled
       );
-    }
+    if (error) throw new Error(error);
   }
   const selected = (field) => field?.selectedRowKeys?.[0] || null;
   return {

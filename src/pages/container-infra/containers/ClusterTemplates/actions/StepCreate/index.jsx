@@ -14,8 +14,8 @@ import { inject, observer } from 'mobx-react';
 import { StepAction } from 'src/containers/Action';
 import globalClusterTemplateStore from 'src/stores/magnum/clusterTemplates';
 import { toJS } from 'mobx';
-import { hasMagnumPolicy } from 'resources/magnum/capabilities';
-import { templateFlavor } from 'resources/magnum/lifecycle';
+import { hasMagnumPolicy, isCapiHelm } from 'resources/magnum/capabilities';
+import { templateFlavor } from 'resources/magnum/template';
 import StepInfo from './StepInfo';
 import StepNodeSpec from './StepNodeSpec';
 import StepNetwork from './StepNetwork';
@@ -104,32 +104,52 @@ export class StepCreate extends StepAction {
       externalNetwork,
       fixedNetwork,
       fixedSubnet,
+      driver,
       ...rest
     } = values;
-    const requestLabels = {};
-    if (additionalLabels) {
-      additionalLabels.forEach((item) => {
-        const labelKey = item.value.key;
-        const labelValue = item.value.value;
-        requestLabels[labelKey] = labelValue;
-      });
-    }
+    const { extra } = this.state;
+    const requestedDriver =
+      driver === undefined ? extra?.driver : driver || null;
+    const image = images?.selectedRows?.[0];
+    const imageMetadata = image?.originData || image;
+    const creationDriver =
+      requestedDriver ||
+      imageMetadata?.properties?.magnum_driver ||
+      imageMetadata?.magnum_driver;
+    const useFlavorNames = this.isEdit
+      ? isCapiHelm({
+          server_type: rest.server_type ?? extra?.server_type,
+          cluster_distro: extra?.cluster_distro,
+          coe: extra?.coe,
+          driver: requestedDriver,
+        })
+      : !creationDriver || isCapiHelm({ driver: creationDriver });
+    const labels = additionalLabels
+      ? Object.fromEntries(
+          additionalLabels
+            .filter(({ value }) => value?.key)
+            .map(({ value }) => [value.key, value.value])
+        )
+      : undefined;
 
     const body = {
       ...rest,
-      labels: requestLabels,
+      driver: requestedDriver,
+      labels,
       external_network_id: externalNetwork.selectedRowKeys[0],
       fixed_network: (fixedNetwork && fixedNetwork.selectedRowKeys[0]) || null,
       fixed_subnet: (fixedSubnet && fixedSubnet.selectedRowKeys[0]) || null,
       flavor_id: templateFlavor(
         flavor,
-        rest.driver,
-        this.state.extra?.flavor_id
+        useFlavorNames,
+        extra?.flavor_id,
+        extra?.flavor
       ),
       master_flavor_id: templateFlavor(
         masterFlavor,
-        rest.driver,
-        this.state.extra?.master_flavor_id
+        useFlavorNames,
+        extra?.master_flavor_id,
+        extra?.masterFlavor
       ),
       image_id: (images && images.selectedRowKeys[0]) || null,
       keypair_id: (keypair && keypair.selectedRowKeys[0]) || null,
@@ -140,10 +160,7 @@ export class StepCreate extends StepAction {
     }
     if (!body.driver && !this.isEdit) delete body.driver;
     if (this.isEdit) {
-      return this.store.update(
-        { id: this.params.id, original: this.state.extra },
-        body
-      );
+      return this.store.update({ id: this.params.id, original: extra }, body);
     }
     return this.store.create(body);
   };

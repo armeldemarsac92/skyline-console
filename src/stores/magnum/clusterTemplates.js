@@ -18,7 +18,7 @@ import { action } from 'mobx';
 import { isBoolean, isEqual } from 'lodash';
 import { allSettled } from 'utils';
 import { listAll } from 'client/magnum';
-import { resolveCapiFlavors } from 'resources/magnum/lifecycle';
+import { resolveMagnumFlavors } from 'resources/magnum/flavor';
 
 // Magnum's JSON Patch parser decodes the text of /labels with Python literal_eval.
 function encodeLabels(labels) {
@@ -143,7 +143,7 @@ export class ClusterTemplatesStore extends Base {
         item.fixed_network ? this.networkClient.show(item.fixed_network) : {},
         item.fixed_subnet ? this.subnetClient.show(item.fixed_subnet) : {},
         item.image_id ? this.imageClient.show(item.image_id) : {},
-        resolveCapiFlavors(item, item, client.nova),
+        resolveMagnumFlavors(item, client.nova),
       ]);
     if (kp.status === 'fulfilled') {
       const { keypairs = [] } = kp.value;

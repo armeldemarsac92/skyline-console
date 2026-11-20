@@ -27,24 +27,14 @@ export class StepLabel extends Base {
     return true;
   }
 
-  get isEdit() {
-    return !!this.props.extra;
-  }
-
   get defaultValue() {
-    const values = {};
-    if (this.isEdit) {
-      const {
-        extra: { labels },
-      } = this.props;
-      values.additionalLabels = Object.keys(labels || {}).map((key) => ({
-        value: {
-          key,
-          value: labels[key],
-        },
-      }));
-    }
-    return values;
+    const labels = this.props.extra?.labels;
+    if (!labels) return {};
+    return {
+      additionalLabels: Object.entries(labels).map(([key, value]) => ({
+        value: { key, value },
+      })),
+    };
   }
 
   get formItems() {

@@ -5,9 +5,12 @@ import { Provider } from 'mobx-react';
 import { Button, Select } from 'antd';
 import client from 'client';
 import ActionButton from 'components/Tables/Base/ActionButton';
-import Resize from 'pages/container-infra/containers/Clusters/actions/Resize';
+import Resize, {
+  Resize as ResizeAction,
+} from 'pages/container-infra/containers/Clusters/actions/Resize';
 import NodeGroups from 'pages/container-infra/containers/Clusters/Detail/NodeGroups';
 import globalProjectStore from 'stores/keystone/project';
+import globalRootStore from 'stores/root';
 import { hasMagnumPolicy } from 'resources/magnum/capabilities';
 import { mockMagnum } from './magnum';
 
@@ -21,8 +24,8 @@ jest.mock(
 );
 
 jest.mock('resources/magnum/capabilities', () => ({
+  ...jest.requireActual('resources/magnum/capabilities'),
   hasMagnumPolicy: jest.fn(() => true),
-  isCapiHelm: (item) => item.template?.driver === 'k8s_capi_helm_v1',
 }));
 
 const cluster = {
@@ -36,6 +39,13 @@ const cluster = {
     driver: 'k8s_capi_helm_v1',
     labels: { auto_scaling_enabled: 'false' },
   },
+};
+
+const legacyTemplate = {
+  name: 'legacy-ubuntu',
+  server_type: 'vm',
+  cluster_distro: 'ubuntu',
+  coe: 'kubernetes',
 };
 
 const groups = [
@@ -143,6 +153,17 @@ describe('Magnum node groups', () => {
 
   beforeEach(() => {
     client.magnum.discovery = undefined;
+    globalRootStore.selectedRegion = 'RegionOne';
+    GLOBAL_VARIABLES.magnumDriverMappings = {
+      RegionOne: [
+        {
+          server_type: 'vm',
+          cluster_distro: 'ubuntu',
+          coe: 'kubernetes',
+          driver: 'k8s_capi_helm_v1',
+        },
+      ],
+    };
     global.globalCSS = { successColor: '#52c41a' };
     window.matchMedia = () => ({
       matches: false,
@@ -163,7 +184,251 @@ describe('Magnum node groups', () => {
     if (http) http.restore();
     document.body.innerHTML = '';
     delete global.globalCSS;
+    delete GLOBAL_VARIABLES.magnumDriverMappings;
+    globalRootStore.selectedRegion = null;
     jest.restoreAllMocks();
+  });
+
+  it.each([
+    ['0.29.0+mustelinet.4', 1, 2, undefined],
+    ['0.29.0+mustelinet.5', 2, 3, { min_node_count: '2', max_node_count: '3' }],
+  ])(
+    'shows the effective autoscaling range and prevents manual resize on %s',
+    async (chart, min, max, labels) => {
+      const detail = {
+        ...cluster,
+        labels,
+        template: {
+          ...legacyTemplate,
+          labels: {
+            capi_helm_chart_version: chart,
+            auto_scaling_enabled: 'true',
+            min_node_count: '1',
+            max_node_count: '2',
+          },
+        },
+      };
+      const records = groups.map((group) =>
+        group.uuid === 'worker-uuid'
+          ? {
+              ...group,
+              node_count: min,
+              min_node_count: 1,
+              max_node_count: null,
+            }
+          : group.uuid === 'compute-uuid'
+          ? { ...group, min_node_count: 2, max_node_count: 4 }
+          : group
+      );
+      http = mockMagnum(
+        ({ method, path }) => method === 'GET' && read(path, records)
+      );
+      await mountGroups({ detail });
+      expect(row('worker-uuid').text()).toContain(`${min} – ${max}`);
+      expect(
+        row('worker-uuid')
+          .find('button')
+          .someWhere(
+            (item) => item.text() === 'Resize' && item.prop('disabled')
+          )
+      ).toBe(true);
+
+      expect(row('compute-uuid').text()).toContain('2 – 4');
+
+      wrapper.unmount();
+      await mountListResize(detail);
+      expect(sizeInput().disabled).toBe(true);
+      expect(document.body.textContent).toContain(
+        'The autoscaler controls this group.'
+      );
+      const action = wrapper.find(ResizeAction).instance();
+      await expect(
+        action.onSubmit({ changed_node_count: max })
+      ).rejects.toThrow('The autoscaler controls this group.');
+      await settle(submit);
+      expect(http.requests.every(({ method }) => method === 'GET')).toBe(true);
+    }
+  );
+
+  it('enforces the effective minimum when default worker autoscaling bounds are equal', async () => {
+    const detail = {
+      ...cluster,
+      template: {
+        ...legacyTemplate,
+        labels: {
+          auto_scaling_enabled: 'true',
+          min_node_count: '2',
+          max_node_count: '2',
+        },
+      },
+    };
+    const records = groups.map((group) =>
+      group.uuid === 'worker-uuid'
+        ? { ...group, min_node_count: 1, max_node_count: null }
+        : group
+    );
+    http = mockMagnum(({ method, path }) => {
+      if (method === 'GET') return read(path, records);
+      if (method === 'POST' && path === resizePath) return { status: 202 };
+      return undefined;
+    });
+    await mountGroups({ detail });
+    await settle(() => button(row('worker-uuid'), 'Resize').simulate('click'));
+    expect(sizeInput().disabled).toBe(false);
+    expect(sizeInput().getAttribute('aria-valuemin')).toBe('2');
+    const action = wrapper.find(ResizeAction).instance();
+    await expect(action.onSubmit({ changed_node_count: 1 })).rejects.toThrow(
+      'Enter a node count within the allowed limits.'
+    );
+    await settle(() => editSize('3'));
+    await settle(submit);
+    expect(
+      http.requests
+        .filter(({ method }) => method === 'POST')
+        .map(({ body }) => body)
+    ).toEqual([{ nodegroup: 'worker-uuid', node_count: 3 }]);
+  });
+
+  it('uses refreshed status, count and bounds for an open pool resize', async () => {
+    let worker = { node_count: 3, min_node_count: 1, max_node_count: 5 };
+    globalProjectStore.fetchProjectNovaQuota.mockResolvedValue({
+      instances: { left: 3 },
+    });
+    http = mockMagnum(({ method, path }) => {
+      if (method === 'GET') {
+        return read(
+          path,
+          groups.map((group) =>
+            group.uuid === 'compute-uuid' ? { ...group, ...worker } : group
+          )
+        );
+      }
+      if (method === 'POST' && path === resizePath) return { status: 202 };
+      return undefined;
+    });
+    await mountGroups();
+    await settle(() => button(row('compute-uuid'), 'Resize').simulate('click'));
+    await settle(() => editSize('4'));
+
+    worker = { node_count: 2, min_node_count: 2, max_node_count: 3 };
+    await settle(() => button(wrapper, 'Refresh').simulate('click'));
+    expect(sizeInput().getAttribute('aria-valuemin')).toBe('2');
+    expect(sizeInput().getAttribute('aria-valuemax')).toBe('3');
+    expect(
+      document.getElementById('form-item-col-current_node_count').textContent
+    ).toContain('2');
+    expect(
+      document.getElementById('form-item-col-instance_delta').textContent
+    ).toContain('2');
+    const action = wrapper.find(ResizeAction).instance();
+    await expect(action.onSubmit({ changed_node_count: 4 })).rejects.toThrow(
+      'Enter a node count within the allowed limits.'
+    );
+
+    worker = { ...worker, status: 'DELETE_IN_PROGRESS' };
+    await settle(() => button(wrapper, 'Refresh').simulate('click'));
+    expect(sizeInput().disabled).toBe(true);
+    await expect(action.onSubmit({ changed_node_count: 3 })).rejects.toThrow();
+    await settle(submit);
+    expect(http.requests.every(({ method }) => method === 'GET')).toBe(true);
+  });
+
+  it('requires an odd control-plane count on a recognized historical driver', async () => {
+    const detail = {
+      ...cluster,
+      template: { ...legacyTemplate, labels: cluster.template.labels },
+    };
+    globalProjectStore.fetchProjectNovaQuota.mockResolvedValue({
+      instances: { left: 2 },
+    });
+    http = mockMagnum(({ method, path }) => {
+      if (method === 'GET') return read(path);
+      if (method === 'POST' && path === resizePath) return { status: 202 };
+      return undefined;
+    });
+    await mountGroups({ detail });
+    await settle(() => button(row('master-uuid'), 'Resize').simulate('click'));
+    const action = wrapper.find(ResizeAction).instance();
+    await expect(action.onSubmit({ changed_node_count: 2 })).rejects.toThrow(
+      'The control plane requires a positive odd node count.'
+    );
+    await settle(() => editSize('3'));
+    await settle(submit);
+    expect(http.requests.find(({ method }) => method === 'POST').body).toEqual({
+      nodegroup: 'master-uuid',
+      node_count: 3,
+    });
+  });
+
+  it('protects a worker with autoscaling enabled while its historical driver is unresolved', async () => {
+    const detail = {
+      ...cluster,
+      template: {
+        ...legacyTemplate,
+        cluster_distro: 'unmapped',
+        labels: { auto_scaling_enabled: 'true' },
+      },
+    };
+    http = mockMagnum(({ method, path }) => method === 'GET' && read(path));
+    await mountListResize(detail);
+    expect(sizeInput().disabled).toBe(true);
+    await expect(
+      wrapper.find(ResizeAction).instance().onSubmit({ changed_node_count: 3 })
+    ).rejects.toThrow();
+    expect(http.requests.every(({ method }) => method === 'GET')).toBe(true);
+  });
+
+  it('keeps an unknown-driver cluster on the common worker resize path', async () => {
+    const detail = {
+      ...cluster,
+      template: { ...legacyTemplate, cluster_distro: 'unknown' },
+    };
+    http = mockMagnum(({ method, path }) => {
+      if (method === 'GET') return read(path);
+      if (method === 'POST' && path === resizePath) return { status: 202 };
+      return undefined;
+    });
+    await mountGroups({ detail });
+    expect(button(wrapper, 'Create Node Group')).toHaveLength(0);
+    expect(button(row('master-uuid'), 'Resize')).toHaveLength(0);
+    await settle(() => button(row('compute-uuid'), 'Resize').simulate('click'));
+    expect(sizeInput().getAttribute('aria-valuemin')).toBe('1');
+    await settle(() => editSize('2'));
+    expect(wrapper.find('textarea[id$="nodes_to_remove"]')).toHaveLength(0);
+    await settle(submit);
+    expect(http.requests.find(({ method }) => method === 'POST').body).toEqual({
+      nodegroup: 'compute-uuid',
+      node_count: 2,
+    });
+  });
+
+  it('blocks group mutations while Magnum is updating or deleting the pool', async () => {
+    let status = 'UPDATE_IN_PROGRESS';
+    http = mockMagnum(
+      ({ method, path }) =>
+        method === 'GET' &&
+        read(
+          path,
+          groups.map((group) =>
+            group.uuid === 'compute-uuid' ? { ...group, status } : group
+          )
+        )
+    );
+    await mountGroups();
+    const pool = () => row('compute-uuid');
+    const expectBlocked = () => {
+      ['Resize', 'Edit Bounds', 'Delete'].forEach((name) => {
+        expect(
+          pool()
+            .find('button')
+            .someWhere((item) => item.text() === name && item.prop('disabled'))
+        ).toBe(true);
+      });
+    };
+    expectBlocked();
+    status = 'DELETE_IN_PROGRESS';
+    await settle(() => button(wrapper, 'Refresh').simulate('click'));
+    expectBlocked();
   });
 
   it('resizes the selected pool through Magnum and keeps both default groups protected', async () => {
@@ -175,7 +440,9 @@ describe('Magnum node groups', () => {
         return read(
           path,
           groups.map((g) =>
-            g.uuid === 'compute-uuid' ? { ...g, node_count: count, status } : g
+            g.uuid === 'compute-uuid'
+              ? { ...g, min_node_count: 2, node_count: count, status }
+              : g
           )
         );
       if (method === 'POST' && path === resizePath) {
@@ -196,6 +463,7 @@ describe('Magnum node groups', () => {
 
     await settle(() => button(row('compute-uuid'), 'Resize').simulate('click'));
     expect(sizeInput().value).toBe('3');
+    expect(sizeInput().getAttribute('aria-valuemin')).toBe('2');
     expect(sizeInput().getAttribute('aria-valuemax')).toBe('4');
     await settle(() => editSize('4'));
     await settle(submit);
@@ -205,6 +473,13 @@ describe('Magnum node groups', () => {
     refused = false;
     await settle(submit);
     const mutations = http.requests.filter(({ method }) => method !== 'GET');
+    expect(
+      mutations.every(
+        ({ path, headers }) =>
+          path === resizePath &&
+          headers['OpenStack-API-Version'] === 'container-infra 1.10'
+      )
+    ).toBe(true);
     expect(mutations.map(({ body }) => body)).toEqual([
       { nodegroup: 'compute-uuid', node_count: 4 },
       { nodegroup: 'compute-uuid', node_count: 4 },
@@ -326,6 +601,7 @@ describe('Magnum node groups', () => {
   it('creates a group with a Nova flavor, edits only the changed bound and deletes the group', async () => {
     const id = 'compute-uuid';
     let provisioned;
+    let updateAllowed = false;
     http = mockMagnum(({ method, path, url, body }) => {
       if (method === 'GET' && url.endsWith('/flavors/detail')) {
         return {
@@ -350,6 +626,12 @@ describe('Magnum node groups', () => {
         return { status: 202, data: { uuid: id } };
       }
       if (method === 'PATCH' && path === `${base}/${id}`) {
+        if (!updateAllowed) {
+          return {
+            status: 403,
+            data: { faultstring: 'Magnum denied the bounds update' },
+          };
+        }
         provisioned = {
           ...provisioned,
           max_node_count: 7,
@@ -364,7 +646,7 @@ describe('Magnum node groups', () => {
       return undefined;
     });
     await mountGroups({
-      detail: { ...cluster, template: { driver: cluster.template.driver } },
+      detail: { ...cluster, template: legacyTemplate },
     });
     await settle(() => button(wrapper, 'Create Node Group').simulate('click'));
     const field = (idPart) => wrapper.find(`input[id="${idPart}"]`);
@@ -386,6 +668,12 @@ describe('Magnum node groups', () => {
         target: { value: '7' },
       })
     );
+    await settle(submit);
+    expect(document.body.textContent).toContain(
+      'Magnum denied the bounds update'
+    );
+    expect(field('edit-node-group_max_node_count').prop('value')).toBe('7');
+    updateAllowed = true;
     await settle(submit);
     expect(row(id).find('td').at(6).text()).toBe('7');
 
@@ -416,12 +704,23 @@ describe('Magnum node groups', () => {
         path: `${base}/${id}`,
         body: [{ op: 'replace', path: '/max_node_count', value: 7 }],
       },
+      {
+        method: 'PATCH',
+        path: `${base}/${id}`,
+        body: [{ op: 'replace', path: '/max_node_count', value: 7 }],
+      },
       { method: 'DELETE', path: `${base}/${id}`, body: null },
     ]);
     const deletion = http.requests.find(({ method }) => method === 'DELETE');
-    expect(deletion.headers['OpenStack-API-Version']).toBe(
-      'container-infra 1.14'
+    const groupRequests = http.requests.filter(
+      ({ path }) => path === base || path.startsWith(`${base}/`)
     );
+    expect(
+      groupRequests.every(
+        ({ headers }) =>
+          headers['OpenStack-API-Version'] === 'container-infra 1.14'
+      )
+    ).toBe(true);
     expect(deletion.params).toEqual({});
   });
 
@@ -445,10 +744,18 @@ describe('Magnum node groups', () => {
     expect(button(row('compute-uuid'), 'Resize')).toHaveLength(1);
   });
 
-  it('shows a foreign project cluster as read-only in the project view', async () => {
-    hasMagnumPolicy.mockReturnValue(true);
+  it.each([
+    ['project reader', 'project-1', false, false],
+    ['member outside the owning project', 'project-2', false, true],
+    ['admin outside the owning project', 'project-2', true, true],
+  ])('keeps groups read-only for a %s', async (_, owner, admin, member) => {
+    hasMagnumPolicy.mockImplementation((rule) =>
+      rule === 'context_is_admin'
+        ? admin
+        : member || rule.startsWith('nodegroup:get')
+    );
     http = mockMagnum(({ method, path }) => method === 'GET' && read(path));
-    await mountGroups({ detail: { ...cluster, project_id: 'project-2' } });
+    await mountGroups({ detail: { ...cluster, project_id: owner } });
     expect(button(row('compute-uuid'), 'Detail')).toHaveLength(1);
     expect(button(row('compute-uuid'), 'Resize')).toHaveLength(0);
     expect(button(row('compute-uuid'), 'Edit Bounds')).toHaveLength(0);

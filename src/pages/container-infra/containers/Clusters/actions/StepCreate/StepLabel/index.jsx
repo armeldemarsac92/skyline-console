@@ -15,6 +15,10 @@
 import Base from 'components/Form';
 import { inject, observer } from 'mobx-react';
 import KeyValueInput from 'components/FormItem/KeyValueInput';
+import {
+  autoscalingBoundsError,
+  workerCountError,
+} from 'resources/magnum/lifecycle';
 
 export class StepLabel extends Base {
   get title() {
@@ -49,6 +53,13 @@ export class StepLabel extends Base {
         type: 'add-select',
         itemComponent: KeyValueInput,
         addText: t('Add Label'),
+        validator: (_, additionalLabels) => {
+          const { context } = this.props;
+          const values = { ...context, additionalLabels };
+          const error =
+            workerCountError(values, true) || autoscalingBoundsError(values);
+          return error ? Promise.reject(new Error(error)) : Promise.resolve();
+        },
         onChange: (value) => {
           this.updateContext({
             additionalLabels: value,

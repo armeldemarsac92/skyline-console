@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import client from 'client';
 import { listAll } from 'client/magnum';
-import { hasMagnumPolicy, isCapiHelm } from './capabilities';
+import { effectiveDriver, hasMagnumPolicy, isCapiHelm } from './capabilities';
+import { autoscaling, defaultWorkerAutoscalingBounds } from './labels';
+
+export { autoscaling };
 
 const eligibleStates = [
   'CREATE_COMPLETE',
@@ -17,6 +20,8 @@ const eligibleStates = [
 
 export const canChangeCluster = ({ status } = {}) =>
   eligibleStates.includes(status);
+export const canChangeGroup = (group) =>
+  !group.pending && canChangeCluster(group);
 export const canPatchCluster = (cluster) =>
   canChangeCluster(cluster) && cluster.status !== 'UPDATE_FAILED';
 export const clusterBelongsToProject = (cluster, projectId) =>
@@ -38,56 +43,71 @@ export const canPatchResize = (admin) =>
   allowed('cluster:update', 'cluster:update_all_projects', admin) &&
   hasMagnumPolicy('cluster:update_health_status');
 
-const clusterLabels = (cluster) => ({
-  ...cluster.template?.labels,
-  ...cluster.labels,
-});
-
-export const autoscaling = (cluster) => {
-  const value = String(clusterLabels(cluster).auto_scaling_enabled)
-    .trim()
-    .toLowerCase();
-  if (['true', '1', 'yes', 'on', 'y', 't'].includes(value)) return true;
-  if (['false', '0', 'no', 'off', 'n', 'f'].includes(value)) return false;
-  return undefined;
-};
-
-const integerLabel = (value, fallback) => {
-  const text = String(value).trim();
-  return /^[+-]?\d+$/.test(text) ? Number(text) : fallback;
-};
-
-export const usesAutoscaler = (cluster, group) => {
+const autoscalingBounds = (cluster, group) => {
   if (
     !isCapiHelm(cluster) ||
     group.role === 'master' ||
     autoscaling(cluster) !== true
-  )
-    return false;
-  const labels = clusterLabels(cluster);
-  const defaultWorker = isDefaultWorker(group);
-  const min =
-    group.min_node_count == null ||
-    (defaultWorker && group.min_node_count === 1)
-      ? group.node_count
-      : group.min_node_count;
-  const max = group.max_node_count ?? group.node_count;
-  return defaultWorker
-    ? integerLabel(labels.min_node_count, min) !==
-        integerLabel(labels.max_node_count, max)
-    : min !== max;
+  ) {
+    return undefined;
+  }
+  if (isDefaultWorker(group)) {
+    return defaultWorkerAutoscalingBounds(cluster);
+  }
+  return {
+    min: group.min_node_count ?? group.node_count,
+    max: group.max_node_count ?? group.node_count,
+  };
+};
+
+export function manualResizeRestriction(cluster, group) {
+  if (group.role === 'master') return undefined;
+  const scaling = autoscaling(cluster);
+  if (
+    (!effectiveDriver(cluster) && scaling === true) ||
+    (isCapiHelm(cluster) && scaling === undefined)
+  ) {
+    return t(
+      'Manual resize is unavailable until the driver and autoscaling settings are verified.'
+    );
+  }
+  const bounds = autoscalingBounds(cluster, group);
+  if (
+    bounds &&
+    (bounds.min === undefined ||
+      bounds.max === undefined ||
+      bounds.min !== bounds.max)
+  ) {
+    return t('The autoscaler controls this group.');
+  }
+  return undefined;
+}
+
+export const autoscalingRange = (cluster, group) => {
+  const bounds = autoscalingBounds(cluster, group);
+  if (!bounds) return undefined;
+  const { min, max } = bounds;
+  if (min === undefined && max === undefined) return t('Unknown');
+  return `${min ?? t('Unknown')} – ${max ?? t('Unknown')}`;
 };
 
 export function resizeLimits(cluster, group, zeroSupported, instancesLeft) {
   const controlPlane = group.role === 'master';
-  const driver = cluster.template?.driver || cluster.driver;
+  const driver = effectiveDriver(cluster);
   const zeroAllowed =
     zeroSupported &&
     driver &&
     (!isCapiHelm(cluster) || autoscaling(cluster) === false);
+  const effectiveMin = isDefaultWorker(group)
+    ? autoscalingBounds(cluster, group)?.min
+    : undefined;
   const min = controlPlane
     ? 1
-    : Math.max(group.min_node_count ?? 0, zeroAllowed ? 0 : 1);
+    : Math.max(
+        group.min_node_count ?? 0,
+        effectiveMin ?? 0,
+        zeroAllowed ? 0 : 1
+      );
   const caps = [controlPlane ? undefined : group.max_node_count || undefined];
   if (instancesLeft >= 0) caps.push(group.node_count + instancesLeft);
   const max = Math.min(...caps.filter((cap) => cap !== undefined));

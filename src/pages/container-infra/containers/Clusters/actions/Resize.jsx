@@ -18,9 +18,15 @@ import Notify from 'components/Notify';
 import client from 'client';
 import globalProjectStore from 'stores/keystone/project';
 import globalRootStore from 'stores/root';
-import { hasMagnumPolicy, isCapiHelm } from 'resources/magnum/capabilities';
 import {
+  effectiveDriver,
+  hasMagnumPolicy,
+  isCapiHelm,
+} from 'resources/magnum/capabilities';
+import {
+  autoscalingRange,
   canChangeCluster,
+  canChangeGroup,
   canListGroups,
   canPatchCluster,
   canPatchResize,
@@ -29,9 +35,9 @@ import {
   isDefaultWorker,
   listGroups,
   magnumError,
+  manualResizeRestriction,
   resizeLimits,
   showGroup,
-  usesAutoscaler,
   versionOptions,
 } from 'resources/magnum/nodegroups';
 
@@ -84,20 +90,57 @@ export class Resize extends ModalAction {
   }
 
   get group() {
-    const { groups = [], selectedGroup } = this.state;
-    return groups.find(({ uuid }) => uuid === selectedGroup);
+    const { groups = [], selectedGroup, sourceGroup } = this.state;
+    const group = groups.find(({ uuid }) => uuid === selectedGroup);
+    if (!group || !this.cluster) return undefined;
+
+    const { nodeGroup } = this.containerProps;
+    if (nodeGroup === sourceGroup) return group;
+    return sourceGroup && nodeGroup?.detailed && nodeGroup.uuid === group.uuid
+      ? nodeGroup
+      : undefined;
   }
 
-  get autoscalerControlsSize() {
-    const { cluster } = this.state;
-    return this.group && usesAutoscaler(cluster, this.group);
+  get cluster() {
+    const { cluster, sourceItem, region } = this.state;
+    const { projectId, selectedRegion } = this.props.rootStore;
+    const { id, uuid, labels, project_id: owner, status, template } = this.item;
+    if (
+      !cluster ||
+      (cluster.uuid || cluster.id) !== (uuid || id) ||
+      selectedRegion !== region ||
+      !clusterBelongsToProject(cluster, projectId)
+    ) {
+      return undefined;
+    }
+    if (sourceItem === this.item) return cluster;
+    return {
+      ...cluster,
+      labels: labels ?? cluster.labels,
+      project_id: owner ?? cluster.project_id,
+      status: status ?? cluster.status,
+      template: template ?? cluster.template,
+    };
+  }
+
+  get resizeRestriction() {
+    const { cluster, group } = this;
+    if (!group) return undefined;
+    if (!canChangeGroup(group)) {
+      return t('No node groups are available to resize.');
+    }
+    return manualResizeRestriction(cluster, group);
+  }
+
+  get canSpecifyNodesToRemove() {
+    return effectiveDriver(this.cluster) && !isCapiHelm(this.cluster);
   }
 
   get limits() {
-    const { cluster, version, instances } = this.state;
+    const { version, instances } = this.state;
     if (!this.group) return { min: 1 };
     return resizeLimits(
-      cluster,
+      this.cluster,
       this.group,
       version === '1.10',
       instances?.left
@@ -108,9 +151,10 @@ export class Resize extends ModalAction {
     this.setState({ loading: true, loadError: undefined });
     try {
       const { magnum } = client;
-      const id = this.item.uuid || this.item.id;
+      const sourceItem = this.item;
+      const id = sourceItem.uuid || sourceItem.id;
       const { nodeGroup } = this.containerProps;
-      const { projectId } = this.props.rootStore;
+      const { projectId, selectedRegion } = this.props.rootStore;
       const admin = hasMagnumPolicy('context_is_admin');
       const patchOnly = !hasMagnumPolicy('cluster:resize');
       if (patchOnly && !canPatchResize(admin)) {
@@ -127,10 +171,10 @@ export class Resize extends ModalAction {
         ? '1.8'
         : '1.7';
 
-      const item = this.item.project_id
-        ? this.item
+      const item = sourceItem.project_id
+        ? sourceItem
         : {
-            ...this.item,
+            ...sourceItem,
             ...(await magnum.clusters.show(id, null, versionOptions(version))),
           };
       const eligible = patchOnly
@@ -156,14 +200,14 @@ export class Resize extends ModalAction {
         }
         const summaries = nodeGroup ? [nodeGroup] : await listGroups(id, '1.9');
         const eligibleGroups = summaries.filter((group) => {
-          if (!group.uuid || !canChangeCluster(group)) return false;
+          if (!group.uuid || !canChangeGroup(group)) return false;
           if (patchOnly) return isDefaultWorker(group);
           return group.role !== 'master' || isCapiHelm(cluster);
         });
         groups = await Promise.all(
           eligibleGroups.map((group) => showGroup(id, group.uuid, '1.9'))
         );
-        groups = groups.filter(canChangeCluster);
+        groups = groups.filter(canChangeGroup);
       } else {
         if (!(await magnum.supportsVersion(version))) {
           throw new Error(
@@ -177,6 +221,7 @@ export class Resize extends ModalAction {
             role: 'worker',
             is_default: true,
             node_count: cluster.node_count,
+            status: cluster.status,
           },
         ];
       }
@@ -192,6 +237,9 @@ export class Resize extends ModalAction {
         this.setState({
           loading: false,
           cluster,
+          sourceItem,
+          sourceGroup: nodeGroup,
+          region: selectedRegion,
           groups,
           version,
           patchOnly,
@@ -214,7 +262,6 @@ export class Resize extends ModalAction {
   get defaultValue() {
     return {
       nodegroup: this.group?.uuid,
-      current_node_count: this.group?.node_count,
       changed_node_count: this.group?.node_count,
     };
   }
@@ -227,7 +274,6 @@ export class Resize extends ModalAction {
     if (nodegroup !== undefined) {
       const group = this.state.groups.find(({ uuid }) => uuid === nodegroup);
       this.getFormInstance().setFieldsValue({
-        current_node_count: group.node_count,
         changed_node_count: group.node_count,
         nodes_to_remove: undefined,
       });
@@ -241,35 +287,34 @@ export class Resize extends ModalAction {
     }
   };
 
-  validateCount = (_, count) => {
+  countError(count) {
+    const { group, resizeRestriction } = this;
+    if (!group) return t('No node groups are available to resize.');
+    if (resizeRestriction) return resizeRestriction;
     const { min, max } = this.limits;
     if (
       !Number.isInteger(count) ||
       count < min ||
       (max !== undefined && count > max)
     ) {
-      return Promise.reject(
-        new Error(t('Enter a node count within the allowed limits.'))
-      );
+      return t('Enter a node count within the allowed limits.');
     }
-    if (count === this.group.node_count) {
-      return Promise.reject(
-        new Error(
-          t('The changed node count can not be equal to the current value')
-        )
-      );
+    if (count === group.node_count) {
+      return t('The changed node count can not be equal to the current value');
     }
-    if (this.group.role === 'master' && count % 2 === 0) {
-      return Promise.reject(
-        new Error(t('The control plane requires a positive odd node count.'))
-      );
+    if (group.role === 'master' && count % 2 === 0) {
+      return t('The control plane requires a positive odd node count.');
     }
-    return Promise.resolve();
+    return undefined;
+  }
+
+  validateCount = (_, count) => {
+    const error = this.countError(count);
+    return error ? Promise.reject(new Error(error)) : Promise.resolve();
   };
 
   get formItems() {
-    const { changed_node_count, cluster, groups, hasGroups, patchOnly } =
-      this.state;
+    const { changed_node_count, groups, hasGroups, patchOnly } = this.state;
     const { nodeGroup } = this.containerProps;
     const { node_count: count } = this.group;
     const { min, max } = this.limits;
@@ -287,6 +332,7 @@ export class Resize extends ModalAction {
         name: 'current_node_count',
         label: t('Current Node Count'),
         type: 'label',
+        content: String(count),
       },
       {
         name: 'changed_node_count',
@@ -297,7 +343,7 @@ export class Resize extends ModalAction {
         step: this.group.role === 'master' ? 2 : 1,
         required: true,
         validator: this.validateCount,
-        disabled: this.autoscalerControlsSize,
+        disabled: !!this.resizeRestriction,
       },
       {
         name: 'instance_delta',
@@ -319,14 +365,16 @@ export class Resize extends ModalAction {
             : Promise.reject(new Error(t('Please enter the correct ID')));
         },
         display:
-          !patchOnly && !isCapiHelm(cluster) && changed_node_count < count,
+          !patchOnly &&
+          this.canSpecifyNodesToRemove &&
+          changed_node_count < count,
       },
     ];
   }
 
   renderForms() {
-    const { loading, loadError, submitError, changed_node_count, cluster } =
-      this.state;
+    const { loading, loadError, submitError, changed_node_count } = this.state;
+    const { cluster, group } = this;
     if (loading) return <Spin />;
     if (loadError) {
       return (
@@ -338,15 +386,24 @@ export class Resize extends ModalAction {
         />
       );
     }
+    if (!group) {
+      return (
+        <Alert
+          type="error"
+          showIcon
+          message={t('No node groups are available to resize.')}
+        />
+      );
+    }
+    const range = autoscalingRange(cluster, group);
     return (
       <Spin spinning={this.isSubmitting}>
-        {this.autoscalerControlsSize && (
+        {this.resizeRestriction && (
           <Alert
             type="info"
             showIcon
-            message={t(
-              'The autoscaler controls this group. Edit its node count bounds to change the allowed range.'
-            )}
+            message={this.resizeRestriction}
+            description={range && `${t('Autoscaling Bounds')} · ${range}`}
           />
         )}
         {isCapiHelm(cluster) && changed_node_count === 0 && (
@@ -370,9 +427,11 @@ export class Resize extends ModalAction {
       loading ||
       loadError ||
       this.isSubmitting ||
-      this.autoscalerControlsSize
-    )
+      !this.group ||
+      this.resizeRestriction
+    ) {
       return;
+    }
     this.checkFormInput(async (values) => {
       if (this.isSubmitting) return;
       this.updateSubmitting(true);
@@ -397,13 +456,30 @@ export class Resize extends ModalAction {
     changed_node_count: count,
     nodes_to_remove: nodesToRemove,
   }) => {
-    const { cluster, patchOnly, hasGroups, version } = this.state;
-    if (!clusterBelongsToProject(cluster, this.props.rootStore.projectId)) {
+    const { patchOnly, hasGroups, version } = this.state;
+    const { projectId } = this.props.rootStore;
+    const { cluster, group } = this;
+    const allowed = patchOnly
+      ? canPatchCluster(cluster) &&
+        canPatchResize(hasMagnumPolicy('context_is_admin')) &&
+        group &&
+        isDefaultWorker(group)
+      : canChangeCluster(cluster) &&
+        hasMagnumPolicy('cluster:resize') &&
+        (group?.role !== 'master' || isCapiHelm(cluster));
+    if (
+      this.unmounted ||
+      !group ||
+      !canChangeGroup(group) ||
+      !allowed ||
+      !clusterBelongsToProject(cluster, projectId)
+    ) {
       throw new Error(t('You do not have permission to resize this cluster.'));
     }
+    const countError = this.countError(count);
+    if (countError) throw new Error(countError);
     const id = cluster.uuid || cluster.id;
     const options = versionOptions(version);
-    const group = this.group;
     if (patchOnly) {
       await client.magnum.clusters.patch(
         id,
@@ -414,7 +490,11 @@ export class Resize extends ModalAction {
     } else {
       const body = { node_count: count };
       if (hasGroups) body.nodegroup = group.uuid;
-      if (!isCapiHelm(cluster) && count < group.node_count && nodesToRemove) {
+      if (
+        this.canSpecifyNodesToRemove &&
+        count < group.node_count &&
+        nodesToRemove
+      ) {
         body.nodes_to_remove = nodesToRemove.split(',');
       }
       await client.magnum.clusters.resize(id, body, null, options);
